@@ -18,6 +18,41 @@ from utils.pdf_parser import PDFParser
 router = APIRouter()
 
 
+def format_download_links(output_files: list) -> str:
+    """
+    格式化下载链接
+    
+    Args:
+        output_files: 输出文件列表
+    
+    Returns:
+        str: 格式化后的下载链接文本
+    """
+    if not output_files:
+        return ""
+    
+    links = []
+    for file_info in output_files:
+        filename = file_info.get("filename", "")
+        download_url = file_info.get("download_url", "")
+        
+        if filename and download_url:
+            if "highlighted" in filename:
+                link_text = "查看带标注的原文"
+            elif "reviewed" in filename:
+                link_text = "下载审查报告"
+            elif "modified" in filename:
+                link_text = "下载修改后的文件"
+            else:
+                link_text = "下载文件"
+            
+            links.append(f"✅ **{link_text}**：[点击下载](http://localhost:8000{download_url})")
+    
+    if links:
+        return "\n\n" + "\n".join(links)
+    return ""
+
+
 @router.post("/stream", summary="流式问答接口（支持工具调用）")
 async def chat_stream(
     request: ChatRequest,
@@ -77,7 +112,7 @@ async def chat_stream(
         """
         full_response = ""
         tool_calls_info = []
-        tool_results_info = []
+        output_files = []
         
         try:
             result = agent.chat_with_tools(
@@ -101,23 +136,35 @@ async def chat_stream(
             if result.get("tool_results"):
                 for tool_result in result["tool_results"]:
                     try:
-                        result_data = json.loads(tool_result.get("content", "{}"))
-                        if result_data.get("success"):
+                        content = tool_result.get("content", "{}")
+                        result_data = json.loads(content)
+                        
+                        if result_data.get("success") and result_data.get("download_url"):
                             output_file = result_data.get("output_filename", "")
+                            download_url = result_data.get("download_url", "")
+                            message = result_data.get("message", "")
+                            
                             if output_file:
-                                tool_results_info.append(output_file)
-                                yield f"data: {json.dumps({'type': 'tool_result', 'content': f'文件已生成: {output_file}', 'output_file': output_file}, ensure_ascii=False)}\n\n"
+                                output_files.append({
+                                    "filename": output_file,
+                                    "download_url": download_url
+                                })
+                                yield f"data: {json.dumps({'type': 'tool_result', 'content': message, 'output_file': output_file, 'download_url': download_url}, ensure_ascii=False)}\n\n"
                     except Exception:
                         pass
             
             if result.get("response"):
                 full_response = result["response"]
-                yield f"data: {json.dumps({'type': 'content', 'content': full_response, 'is_end': False}, ensure_ascii=False)}\n\n"
+            
+            download_links = format_download_links(output_files)
+            final_response = full_response + download_links
+            
+            yield f"data: {json.dumps({'type': 'content', 'content': final_response, 'is_end': False}, ensure_ascii=False)}\n\n"
             
             msg_service.create_message(
                 conversation_id=request.conversation_id,
                 role="assistant",
-                content=full_response
+                content=final_response
             )
             
             response_data = {
@@ -125,7 +172,7 @@ async def chat_stream(
                 'content': '', 
                 'is_end': True,
                 'tool_calls': tool_calls_info,
-                'output_files': tool_results_info
+                'output_files': output_files
             }
             yield f"data: {json.dumps(response_data, ensure_ascii=False)}\n\n"
             
@@ -207,19 +254,36 @@ async def chat_sync(
         
         response = result.get("response", "")
         
+        output_files = []
+        if result.get("tool_results"):
+            for tool_result in result["tool_results"]:
+                try:
+                    content = tool_result.get("content", "{}")
+                    result_data = json.loads(content)
+                    if result_data.get("success") and result_data.get("download_url"):
+                        output_files.append({
+                            "filename": result_data.get("output_filename"),
+                            "download_url": result_data.get("download_url")
+                        })
+                except Exception:
+                    pass
+        
+        download_links = format_download_links(output_files)
+        final_response = response + download_links
+        
         msg_service.create_message(
             conversation_id=request.conversation_id,
             role="assistant",
-            content=response
+            content=final_response
         )
         
         return ApiResponse(
             code=200,
             message="success",
             data={
-                "response": response,
+                "response": final_response,
                 "tool_calls": result.get("tool_calls", []),
-                "tool_results": result.get("tool_results", [])
+                "output_files": output_files
             }
         )
     except Exception as e:
@@ -254,13 +318,30 @@ async def quick_chat(
             knowledge_base_id=knowledge_base_id
         )
         
+        output_files = []
+        if result.get("tool_results"):
+            for tool_result in result["tool_results"]:
+                try:
+                    content = tool_result.get("content", "{}")
+                    result_data = json.loads(content)
+                    if result_data.get("success") and result_data.get("download_url"):
+                        output_files.append({
+                            "filename": result_data.get("output_filename"),
+                            "download_url": result_data.get("download_url")
+                        })
+                except Exception:
+                    pass
+        
+        download_links = format_download_links(output_files)
+        final_response = result.get("response", "") + download_links
+        
         return ApiResponse(
             code=200,
             message="success",
             data={
-                "response": result.get("response", ""),
+                "response": final_response,
                 "tool_calls": result.get("tool_calls", []),
-                "tool_results": result.get("tool_results", [])
+                "output_files": output_files
             }
         )
     except Exception as e:
