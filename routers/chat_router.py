@@ -14,6 +14,9 @@ from services.conversation_service import ConversationService
 from services.message_service import MessageService
 from agent import create_audit_agent
 from utils.pdf_parser import PDFParser
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 router = APIRouter()
 
@@ -73,10 +76,13 @@ async def chat_stream(
     Raises:
         HTTPException: 对话不存在时抛出404错误
     """
+    logger.info(f"流式问答请求 - 对话ID: {request.conversation_id}, 消息: {request.message[:50]}...")
+    
     conv_service = ConversationService(db)
     conversation = conv_service.get_conversation_by_id(request.conversation_id)
     
     if not conversation:
+        logger.error(f"对话不存在 - 对话ID: {request.conversation_id}")
         raise HTTPException(status_code=404, detail="对话不存在")
     
     msg_service = MessageService(db)
@@ -88,21 +94,24 @@ async def chat_stream(
         file_paths=request.file_paths,
         knowledge_base_id=request.knowledge_base_id
     )
+    logger.debug(f"用户消息已保存 - 对话ID: {request.conversation_id}")
     
     history = msg_service.get_conversation_history(request.conversation_id)
     
     file_content = None
     if request.file_paths:
+        logger.debug(f"开始提取文件内容 - 文件数: {len(request.file_paths)}")
         pdf_parser = PDFParser()
         contents = []
         for file_path in request.file_paths:
             try:
                 content = pdf_parser.extract_text_from_pdf(file_path)
                 contents.append(content)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"文件内容提取失败 - 文件: {file_path}, 错误: {str(e)}")
         if contents:
             file_content = "\n\n".join(contents)
+            logger.info(f"文件内容提取成功 - 总字符数: {len(file_content)}")
     
     agent = create_audit_agent()
     
@@ -115,6 +124,7 @@ async def chat_stream(
         output_files = []
         
         try:
+            logger.debug(f"开始调用智能体 - 对话ID: {request.conversation_id}")
             result = agent.chat_with_tools(
                 question=request.message,
                 messages=history[:-1],
@@ -124,6 +134,7 @@ async def chat_stream(
             )
             
             if result.get("tool_calls"):
+                logger.info(f"检测到工具调用 - 数量: {len(result['tool_calls'])}")
                 for tool_call in result["tool_calls"]:
                     tool_info = {
                         "name": tool_call.get("name", ""),
@@ -131,9 +142,11 @@ async def chat_stream(
                     }
                     tool_calls_info.append(tool_info)
                     tool_name = tool_info["name"]
+                    logger.debug(f"工具调用: {tool_name}")
                     yield f"data: {json.dumps({'type': 'tool_call', 'content': f'正在调用工具: {tool_name}', 'tool': tool_info}, ensure_ascii=False)}\n\n"
             
             if result.get("tool_results"):
+                logger.debug(f"处理工具结果 - 数量: {len(result['tool_results'])}")
                 for tool_result in result["tool_results"]:
                     try:
                         content = tool_result.get("content", "{}")
@@ -149,9 +162,10 @@ async def chat_stream(
                                     "filename": output_file,
                                     "download_url": download_url
                                 })
+                                logger.info(f"生成输出文件: {output_file}")
                                 yield f"data: {json.dumps({'type': 'tool_result', 'content': message, 'output_file': output_file, 'download_url': download_url}, ensure_ascii=False)}\n\n"
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.error(f"工具结果解析失败: {str(e)}")
             
             if result.get("response"):
                 full_response = result["response"]
@@ -166,6 +180,7 @@ async def chat_stream(
                 role="assistant",
                 content=final_response
             )
+            logger.info(f"助手消息已保存 - 对话ID: {request.conversation_id}")
             
             response_data = {
                 'type': 'end', 
@@ -177,6 +192,7 @@ async def chat_stream(
             yield f"data: {json.dumps(response_data, ensure_ascii=False)}\n\n"
             
         except Exception as e:
+            logger.error(f"流式问答异常 - 对话ID: {request.conversation_id}, 错误: {str(e)}", exc_info=True)
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
     
     return StreamingResponse(
@@ -210,10 +226,13 @@ async def chat_sync(
     Raises:
         HTTPException: 对话不存在时抛出404错误
     """
+    logger.info(f"同步问答请求 - 对话ID: {request.conversation_id}, 消息: {request.message[:50]}...")
+    
     conv_service = ConversationService(db)
     conversation = conv_service.get_conversation_by_id(request.conversation_id)
     
     if not conversation:
+        logger.error(f"对话不存在 - 对话ID: {request.conversation_id}")
         raise HTTPException(status_code=404, detail="对话不存在")
     
     msg_service = MessageService(db)
@@ -225,25 +244,29 @@ async def chat_sync(
         file_paths=request.file_paths,
         knowledge_base_id=request.knowledge_base_id
     )
+    logger.debug(f"用户消息已保存 - 对话ID: {request.conversation_id}")
     
     history = msg_service.get_conversation_history(request.conversation_id)
     
     file_content = None
     if request.file_paths:
+        logger.debug(f"开始提取文件内容 - 文件数: {len(request.file_paths)}")
         pdf_parser = PDFParser()
         contents = []
         for file_path in request.file_paths:
             try:
                 content = pdf_parser.extract_text_from_pdf(file_path)
                 contents.append(content)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"文件内容提取失败 - 文件: {file_path}, 错误: {str(e)}")
         if contents:
             file_content = "\n\n".join(contents)
+            logger.info(f"文件内容提取成功 - 总字符数: {len(file_content)}")
     
     agent = create_audit_agent()
     
     try:
+        logger.debug(f"开始调用智能体 - 对话ID: {request.conversation_id}")
         result = agent.chat_with_tools(
             question=request.message,
             messages=history[:-1],
@@ -256,6 +279,7 @@ async def chat_sync(
         
         output_files = []
         if result.get("tool_results"):
+            logger.debug(f"处理工具结果 - 数量: {len(result['tool_results'])}")
             for tool_result in result["tool_results"]:
                 try:
                     content = tool_result.get("content", "{}")
@@ -265,8 +289,9 @@ async def chat_sync(
                             "filename": result_data.get("output_filename"),
                             "download_url": result_data.get("download_url")
                         })
-                except Exception:
-                    pass
+                        logger.info(f"生成输出文件: {result_data.get('output_filename')}")
+                except Exception as e:
+                    logger.error(f"工具结果解析失败: {str(e)}")
         
         download_links = format_download_links(output_files)
         final_response = response + download_links
@@ -276,6 +301,7 @@ async def chat_sync(
             role="assistant",
             content=final_response
         )
+        logger.info(f"同步问答完成 - 对话ID: {request.conversation_id}")
         
         return ApiResponse(
             code=200,
@@ -287,6 +313,7 @@ async def chat_sync(
             }
         )
     except Exception as e:
+        logger.error(f"同步问答异常 - 对话ID: {request.conversation_id}, 错误: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"生成回答失败: {str(e)}")
 
 
@@ -309,9 +336,12 @@ async def quick_chat(
     Returns:
         ApiResponse: 包含回答的响应
     """
+    logger.info(f"快速问答请求 - 消息: {message[:50]}..., 知识库ID: {knowledge_base_id}")
+    
     agent = create_audit_agent()
     
     try:
+        logger.debug("开始调用智能体")
         result = agent.chat_with_tools(
             question=message,
             messages=[],
@@ -320,6 +350,7 @@ async def quick_chat(
         
         output_files = []
         if result.get("tool_results"):
+            logger.debug(f"处理工具结果 - 数量: {len(result['tool_results'])}")
             for tool_result in result["tool_results"]:
                 try:
                     content = tool_result.get("content", "{}")
@@ -329,11 +360,14 @@ async def quick_chat(
                             "filename": result_data.get("output_filename"),
                             "download_url": result_data.get("download_url")
                         })
-                except Exception:
-                    pass
+                        logger.info(f"生成输出文件: {result_data.get('output_filename')}")
+                except Exception as e:
+                    logger.error(f"工具结果解析失败: {str(e)}")
         
         download_links = format_download_links(output_files)
         final_response = result.get("response", "") + download_links
+        
+        logger.info(f"快速问答完成")
         
         return ApiResponse(
             code=200,
@@ -345,4 +379,5 @@ async def quick_chat(
             }
         )
     except Exception as e:
+        logger.error(f"快速问答异常 - 错误: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"生成回答失败: {str(e)}")

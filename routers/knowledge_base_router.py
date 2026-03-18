@@ -16,6 +16,9 @@ from models.schemas import (
 )
 from services.knowledge_base_service import KnowledgeBaseService
 from utils.file_utils import save_upload_file
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 router = APIRouter()
 

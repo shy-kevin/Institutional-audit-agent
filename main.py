@@ -9,6 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import settings
 from db.mysql_session import init_db
 from routers import api_router
+from utils.logger import setup_logger, LogConfig
+
+logger = setup_logger(__name__)
 
 
 @asynccontextmanager
@@ -16,8 +19,11 @@ async def lifespan(app: FastAPI):
     """
     应用生命周期管理
     
-    在应用启动时初始化数据库和上传目录
+    在应用启动时初始化数据库、上传目录和日志系统
     """
+    LogConfig.setup_logging(log_dir="logs", log_level="INFO" if not settings.DEBUG else "DEBUG")
+    logger.info("应用启动 - 初始化数据库和目录")
+    
     init_db()
     
     upload_dir = settings.UPLOAD_DIR
@@ -25,8 +31,13 @@ async def lifespan(app: FastAPI):
         os.makedirs(upload_dir)
         os.makedirs(os.path.join(upload_dir, "knowledge_base"))
         os.makedirs(os.path.join(upload_dir, "temp"))
+        logger.info(f"创建上传目录: {upload_dir}")
+    
+    logger.info(f"应用启动完成 - {settings.APP_NAME} v{settings.APP_VERSION}")
     
     yield
+    
+    logger.info("应用关闭")
 
 
 app = FastAPI(

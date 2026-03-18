@@ -16,6 +16,9 @@ from models.schemas import (
 )
 from services.conversation_service import ConversationService
 from services.message_service import MessageService
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 router = APIRouter()
 
@@ -37,12 +40,15 @@ def create_conversation(
     Returns:
         ConversationResponse: 创建的对话信息
     """
+    logger.info(f"创建新对话请求 - 标题: {request.title}")
+    
     service = ConversationService(db)
     conversation = service.create_conversation(
         title=request.title,
         description=request.description
     )
     
+    logger.info(f"对话创建成功 - ID: {conversation.id}, 标题: {conversation.title}")
     return ConversationResponse.model_validate(conversation)
 
 
@@ -67,9 +73,12 @@ def get_conversation_list(
     Returns:
         ConversationListResponse: 对话列表响应
     """
+    logger.info(f"获取对话列表请求 - skip: {skip}, limit: {limit}, status: {status}")
+    
     service = ConversationService(db)
     conversations, total = service.get_all_conversations(skip, limit, status)
     
+    logger.info(f"对话列表查询成功 - 总数: {total}, 返回: {len(conversations)}")
     return ConversationListResponse(
         total=total,
         items=[ConversationResponse.model_validate(conv) for conv in conversations]
@@ -96,12 +105,16 @@ def get_conversation(
     Raises:
         HTTPException: 对话不存在时抛出404错误
     """
+    logger.info(f"获取对话详情请求 - ID: {conversation_id}")
+    
     service = ConversationService(db)
     conversation = service.get_conversation_by_id(conversation_id)
     
     if not conversation:
+        logger.error(f"对话不存在 - ID: {conversation_id}")
         raise HTTPException(status_code=404, detail="对话不存在")
     
+    logger.debug(f"对话详情查询成功 - ID: {conversation_id}, 标题: {conversation.title}")
     return ConversationResponse.model_validate(conversation)
 
 
@@ -127,6 +140,8 @@ def update_conversation(
     Raises:
         HTTPException: 对话不存在时抛出404错误
     """
+    logger.info(f"更新对话请求 - ID: {conversation_id}, 新标题: {request.title}")
+    
     service = ConversationService(db)
     conversation = service.update_conversation(
         conversation_id=conversation_id,
@@ -135,8 +150,10 @@ def update_conversation(
     )
     
     if not conversation:
+        logger.error(f"对话不存在 - ID: {conversation_id}")
         raise HTTPException(status_code=404, detail="对话不存在")
     
+    logger.info(f"对话更新成功 - ID: {conversation_id}")
     return ConversationResponse.model_validate(conversation)
 
 
@@ -160,14 +177,19 @@ def delete_conversation(
     Raises:
         HTTPException: 对话不存在或删除失败时抛出错误
     """
+    logger.info(f"删除对话请求 - ID: {conversation_id}")
+    
     service = ConversationService(db)
     
     if not service.get_conversation_by_id(conversation_id):
+        logger.error(f"对话不存在 - ID: {conversation_id}")
         raise HTTPException(status_code=404, detail="对话不存在")
     
     if not service.delete_conversation(conversation_id):
+        logger.error(f"对话删除失败 - ID: {conversation_id}")
         raise HTTPException(status_code=500, detail="删除失败")
     
+    logger.info(f"对话删除成功 - ID: {conversation_id}")
     return ApiResponse(code=200, message="对话删除成功")
 
 
@@ -193,13 +215,17 @@ def get_conversation_messages(
     Raises:
         HTTPException: 对话不存在时抛出404错误
     """
+    logger.info(f"获取对话消息列表请求 - 对话ID: {conversation_id}, limit: {limit}")
+    
     conv_service = ConversationService(db)
     if not conv_service.get_conversation_by_id(conversation_id):
+        logger.error(f"对话不存在 - ID: {conversation_id}")
         raise HTTPException(status_code=404, detail="对话不存在")
     
     msg_service = MessageService(db)
     messages = msg_service.get_messages_by_conversation_id(conversation_id, limit)
     
+    logger.info(f"消息列表查询成功 - 对话ID: {conversation_id}, 消息数: {len(messages)}")
     return MessageListResponse(
         total=len(messages),
         items=[{
@@ -234,10 +260,14 @@ def archive_conversation(
     Raises:
         HTTPException: 对话不存在时抛出404错误
     """
+    logger.info(f"归档对话请求 - ID: {conversation_id}")
+    
     service = ConversationService(db)
     conversation = service.archive_conversation(conversation_id)
     
     if not conversation:
+        logger.error(f"对话不存在 - ID: {conversation_id}")
         raise HTTPException(status_code=404, detail="对话不存在")
     
+    logger.info(f"对话归档成功 - ID: {conversation_id}")
     return ConversationResponse.model_validate(conversation)

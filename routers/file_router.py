@@ -4,6 +4,8 @@
 """
 
 from typing import Optional, List
+from pathlib import Path
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -11,6 +13,9 @@ from pydantic import BaseModel, Field
 from db import get_db
 from models.schemas import ApiResponse
 from utils.file_tools import file_tools
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 router = APIRouter()
 
@@ -65,6 +70,13 @@ class ChatWithToolsRequest(BaseModel):
     file_paths: Optional[List[str]] = Field(None, description="上传文件路径列表")
 
 
+class ConvertToPdfRequest(BaseModel):
+    """
+    文件转PDF请求
+    """
+    file_path: str = Field(..., description="文件相对路径或完整URL")
+
+
 @router.post("/read", summary="读取文件内容")
 async def read_file(
     request: ReadFileRequest
@@ -80,11 +92,15 @@ async def read_file(
     Returns:
         dict: 文件内容和元数据
     """
+    logger.info(f"读取文件请求 - 文件路径: {request.file_path}")
+    
     result = file_tools.read_file_content(request.file_path)
     
     if not result.get("success"):
+        logger.error(f"文件读取失败 - 文件: {request.file_path}, 错误: {result.get('error')}")
         raise HTTPException(status_code=400, detail=result.get("error", "读取文件失败"))
     
+    logger.info(f"文件读取成功 - 文件: {request.file_path}")
     return result
 
 
@@ -103,6 +119,8 @@ async def highlight_pdf_text(
     Returns:
         dict: 操作结果，包含输出文件路径
     """
+    logger.info(f"PDF标注请求 - 文件: {request.file_path}, 标注文本数: {len(request.highlight_texts)}")
+    
     result = file_tools.highlight_text_in_pdf(
         file_path=request.file_path,
         highlight_texts=request.highlight_texts,
@@ -110,8 +128,10 @@ async def highlight_pdf_text(
     )
     
     if not result.get("success"):
+        logger.error(f"PDF标注失败 - 文件: {request.file_path}, 错误: {result.get('error')}")
         raise HTTPException(status_code=400, detail=result.get("error", "标注失败"))
     
+    logger.info(f"PDF标注成功 - 输出文件: {result.get('output_filename')}")
     return result
 
 
@@ -130,6 +150,8 @@ async def modify_pdf_text(
     Returns:
         dict: 操作结果，包含输出文件路径和修改记录
     """
+    logger.info(f"PDF修改请求 - 文件: {request.file_path}, 修改数: {len(request.modifications)}")
+    
     result = file_tools.modify_text_in_pdf(
         file_path=request.file_path,
         modifications=request.modifications,
@@ -137,8 +159,10 @@ async def modify_pdf_text(
     )
     
     if not result.get("success"):
+        logger.error(f"PDF修改失败 - 文件: {request.file_path}, 错误: {result.get('error')}")
         raise HTTPException(status_code=400, detail=result.get("error", "修改失败"))
     
+    logger.info(f"PDF修改成功 - 输出文件: {result.get('output_filename')}")
     return result
 
 
@@ -157,6 +181,8 @@ async def highlight_docx_text(
     Returns:
         dict: 操作结果，包含输出文件路径
     """
+    logger.info(f"Word标注请求 - 文件: {request.file_path}, 标注文本数: {len(request.highlight_texts)}")
+    
     result = file_tools.create_highlighted_docx(
         file_path=request.file_path,
         highlight_texts=request.highlight_texts,
@@ -164,8 +190,10 @@ async def highlight_docx_text(
     )
     
     if not result.get("success"):
+        logger.error(f"Word标注失败 - 文件: {request.file_path}, 错误: {result.get('error')}")
         raise HTTPException(status_code=400, detail=result.get("error", "标注失败"))
     
+    logger.info(f"Word标注成功 - 输出文件: {result.get('output_filename')}")
     return result
 
 
@@ -184,6 +212,8 @@ async def modify_docx_text(
     Returns:
         dict: 操作结果，包含输出文件路径和修改记录
     """
+    logger.info(f"Word修改请求 - 文件: {request.file_path}, 修改数: {len(request.modifications)}")
+    
     result = file_tools.modify_text_in_docx(
         file_path=request.file_path,
         modifications=request.modifications,
@@ -191,8 +221,10 @@ async def modify_docx_text(
     )
     
     if not result.get("success"):
+        logger.error(f"Word修改失败 - 文件: {request.file_path}, 错误: {result.get('error')}")
         raise HTTPException(status_code=400, detail=result.get("error", "修改失败"))
     
+    logger.info(f"Word修改成功 - 输出文件: {result.get('output_filename')}")
     return result
 
 
@@ -211,6 +243,8 @@ async def add_review_comments(
     Returns:
         dict: 操作结果，包含输出文件路径
     """
+    logger.info(f"生成审查报告请求 - 文件: {request.file_path}, 审查意见数: {len(request.comments)}")
+    
     result = file_tools.add_review_comments(
         file_path=request.file_path,
         comments=request.comments,
@@ -218,34 +252,95 @@ async def add_review_comments(
     )
     
     if not result.get("success"):
+        logger.error(f"审查报告生成失败 - 文件: {request.file_path}, 错误: {result.get('error')}")
         raise HTTPException(status_code=400, detail=result.get("error", "生成报告失败"))
     
+    logger.info(f"审查报告生成成功 - 输出文件: {result.get('output_filename')}")
     return result
 
 
 @router.get("/download/{filename}", summary="下载文件")
 async def download_file(
-    filename: str
+    filename: str,
+    preview: bool = False
 ):
     """
-    下载修改后的文件
+    下载或预览文件
     
     Args:
         filename: 文件名
+        preview: 是否预览模式（True为预览，False为下载）
     
     Returns:
-        FileResponse: 文件下载响应
+        FileResponse: 文件下载或预览响应
     """
+    logger.info(f"文件下载请求 - 文件名: {filename}, 预览模式: {preview}")
+    
     file_path = file_tools.get_output_file(filename)
     
     if not file_path:
+        logger.error(f"文件不存在 - 文件名: {filename}")
         raise HTTPException(status_code=404, detail="文件不存在")
+    
+    file_ext = Path(filename).suffix.lower()
+    
+    if file_ext == ".pdf":
+        media_type = "application/pdf"
+    elif file_ext in [".docx", ".doc"]:
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    elif file_ext == ".txt":
+        media_type = "text/plain"
+    else:
+        media_type = "application/octet-stream"
+    
+    disposition = "inline" if preview else "attachment"
+    
+    encoded_filename = quote(filename, safe='')
+    content_disposition = f"{disposition}; filename*=UTF-8''{encoded_filename}"
+    
+    logger.debug(f"文件响应 - 类型: {media_type}, 模式: {disposition}")
     
     return FileResponse(
         path=file_path,
         filename=filename,
-        media_type="application/octet-stream"
+        media_type=media_type,
+        headers={
+            "Content-Disposition": content_disposition
+        }
     )
+
+
+@router.post("/convert-to-pdf", summary="文件转PDF")
+async def convert_to_pdf(
+    request: ConvertToPdfRequest
+):
+    """
+    将文件转换为PDF格式
+    
+    支持 Word(.docx)、TXT 等格式转换为 PDF
+    
+    Args:
+        request: 转换请求
+    
+    Returns:
+        dict: 转换结果，包含 success 和 download_url 或 error
+    """
+    logger.info(f"文件转PDF请求 - 文件路径: {request.file_path}")
+    
+    result = file_tools.convert_to_pdf(request.file_path)
+    
+    if result.get("success"):
+        logger.info(f"文件转换成功 - 输出文件: {result.get('download_url')}")
+        return {
+            "success": True,
+            "download_url": result.get("download_url")
+        }
+    else:
+        logger.error(f"文件转换失败 - 文件: {request.file_path}, 错误: {result.get('error')}")
+        return {
+            "success": False,
+            "message": result.get("error", "转换失败")
+        }
 
 
 @router.post("/chat-with-tools", summary="带工具调用的智能问答")
@@ -265,6 +360,8 @@ async def chat_with_tools(
     Returns:
         dict: 包含响应和工具调用结果
     """
+    logger.info(f"带工具调用的智能问答请求 - 对话ID: {request.conversation_id}, 消息: {request.message[:50]}...")
+    
     from services.conversation_service import ConversationService
     from services.message_service import MessageService
     from agent import create_audit_agent
@@ -273,6 +370,7 @@ async def chat_with_tools(
     conversation = conv_service.get_conversation_by_id(request.conversation_id)
     
     if not conversation:
+        logger.error(f"对话不存在 - 对话ID: {request.conversation_id}")
         raise HTTPException(status_code=404, detail="对话不存在")
     
     msg_service = MessageService(db)
@@ -284,12 +382,14 @@ async def chat_with_tools(
         file_paths=request.file_paths,
         knowledge_base_id=request.knowledge_base_id
     )
+    logger.debug(f"用户消息已保存 - 对话ID: {request.conversation_id}")
     
     history = msg_service.get_conversation_history(request.conversation_id)
     
     agent = create_audit_agent(enable_tools=True)
     
     try:
+        logger.debug(f"开始调用智能体 - 对话ID: {request.conversation_id}")
         result = agent.chat_with_tools(
             question=request.message,
             messages=history[:-1],
@@ -303,6 +403,9 @@ async def chat_with_tools(
                 role="assistant",
                 content=result["response"]
             )
+            logger.info(f"助手消息已保存 - 对话ID: {request.conversation_id}")
+        
+        logger.info(f"智能问答完成 - 对话ID: {request.conversation_id}")
         
         return {
             "code": 200,
@@ -310,4 +413,5 @@ async def chat_with_tools(
             "data": result
         }
     except Exception as e:
+        logger.error(f"智能问答异常 - 对话ID: {request.conversation_id}, 错误: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")

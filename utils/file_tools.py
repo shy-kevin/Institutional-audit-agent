@@ -6,8 +6,11 @@
 import os
 import re
 import json
+import tempfile
 from typing import Optional, List, Dict, Any
 from pathlib import Path
+from urllib.parse import urlparse, unquote
+import httpx
 from pypdf import PdfReader, PdfWriter
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -30,6 +33,7 @@ class FileOperationTools:
     Attributes:
         upload_dir: 上传文件目录
         output_dir: 输出文件目录
+        converted_dir: 转换文件目录
     """
     
     def __init__(self):
@@ -39,6 +43,8 @@ class FileOperationTools:
         self.upload_dir = Path(settings.UPLOAD_DIR)
         self.output_dir = self.upload_dir / "modified"
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.converted_dir = self.upload_dir / "converted"
+        self.converted_dir.mkdir(parents=True, exist_ok=True)
         self._init_fonts()
     
     def _init_fonts(self):
@@ -544,7 +550,284 @@ class FileOperationTools:
         file_path = self.output_dir / filename
         if file_path.exists():
             return str(file_path)
+        
+        converted_file = self.converted_dir / filename
+        if converted_file.exists():
+            return str(converted_file)
+        
         return None
+    
+    def convert_to_pdf(self, file_path: str) -> Dict[str, Any]:
+        """
+        将文件转换为PDF格式
+        
+        支持 Word(.docx)、TXT 等格式转换为 PDF
+        支持本地文件路径和URL
+        
+        Args:
+            file_path: 原文件路径（相对路径、绝对路径或URL）
+        
+        Returns:
+            Dict[str, Any]: 转换结果，包含 success、download_url 或 error
+        """
+        temp_file = None
+        
+        try:
+            parsed_url = urlparse(file_path)
+            is_url = parsed_url.scheme in ['http', 'https']
+            
+            if is_url:
+                if self._is_local_url(file_path):
+                    local_file_path = self._get_local_file_path_from_url(file_path)
+                    if not local_file_path or not os.path.exists(local_file_path):
+                        return {"success": False, "error": "文件不存在"}
+                    filename = unquote(Path(parsed_url.path).name)
+                    file_ext = Path(filename).suffix.lower()
+                else:
+                    result = self._download_file_from_url(file_path)
+                    if not result.get("success"):
+                        return result
+                    local_file_path = result["file_path"]
+                    temp_file = local_file_path
+                    filename = unquote(Path(parsed_url.path).name)
+                    file_ext = Path(filename).suffix.lower()
+            else:
+                if not os.path.exists(file_path):
+                    return {"success": False, "error": "文件不存在"}
+                
+                local_file_path = file_path
+                file_ext = Path(file_path).suffix.lower()
+                filename = Path(file_path).name
+            
+            if file_ext == ".pdf":
+                return {"success": False, "error": "文件已经是PDF格式，无需转换"}
+            
+            if file_ext not in [".docx", ".doc", ".txt"]:
+                return {"success": False, "error": f"不支持的文件类型: {file_ext}，仅支持 Word(.docx) 和 TXT 格式"}
+            
+            output_filename = f"{Path(filename).stem}.pdf"
+            output_path = self.converted_dir / output_filename
+            
+            if file_ext in [".docx", ".doc"]:
+                result = self._convert_docx_to_pdf(local_file_path, str(output_path))
+            elif file_ext == ".txt":
+                result = self._convert_txt_to_pdf(local_file_path, str(output_path))
+            else:
+                return {"success": False, "error": f"不支持的文件类型: {file_ext}"}
+            
+            if result.get("success"):
+                download_url = f"uploads/converted/{output_filename}"
+                return {
+                    "success": True,
+                    "download_url": download_url,
+                    "output_path": str(output_path),
+                    "output_filename": output_filename,
+                    "message": f"文件转换成功: {output_filename}"
+                }
+            else:
+                return result
+                
+        except Exception as e:
+            return {"success": False, "error": f"转换失败: {str(e)}"}
+        finally:
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except Exception:
+                    pass
+    
+    def _is_local_url(self, url: str) -> bool:
+        """
+        判断URL是否为本地URL
+        
+        Args:
+            url: URL字符串
+        
+        Returns:
+            bool: 是否为本地URL
+        """
+        try:
+            parsed = urlparse(url)
+            return parsed.scheme in ['http', 'https'] and parsed.hostname in ['localhost', '127.0.0.1']
+        except Exception:
+            return False
+    
+    def _get_local_file_path_from_url(self, url: str) -> Optional[str]:
+        """
+        从本地URL提取本地文件路径
+        
+        Args:
+            url: 本地URL
+        
+        Returns:
+            Optional[str]: 本地文件路径，如果无法提取则返回None
+        """
+        try:
+            parsed = urlparse(url)
+            path = unquote(parsed.path)
+            
+            if path.startswith('/api/file/download/'):
+                filename = path.replace('/api/file/download/', '')
+                
+                output_file = self.get_output_file(filename)
+                if output_file:
+                    return output_file
+                
+                converted_file = self.converted_dir / filename
+                if converted_file.exists():
+                    return str(converted_file)
+                
+                temp_file = self.upload_dir / "temp" / filename
+                if temp_file.exists():
+                    return str(temp_file)
+                
+                kb_file = self.upload_dir / "knowledge_base" / filename
+                if kb_file.exists():
+                    return str(kb_file)
+                
+                direct_file = self.upload_dir / filename
+                if direct_file.exists():
+                    return str(direct_file)
+            
+            return None
+            
+        except Exception:
+            return None
+    
+    def _download_file_from_url(self, url: str) -> Dict[str, Any]:
+        """
+        从URL下载文件到临时目录
+        
+        Args:
+            url: 文件URL
+        
+        Returns:
+            Dict[str, Any]: 下载结果，包含 success 和 file_path 或 error
+        """
+        try:
+            response = httpx.get(url, follow_redirects=True, timeout=30.0)
+            
+            if response.status_code != 200:
+                return {"success": False, "error": f"下载文件失败: HTTP {response.status_code}"}
+            
+            parsed_url = urlparse(url)
+            filename = unquote(Path(parsed_url.path).name)
+            
+            if not filename:
+                filename = "downloaded_file"
+            
+            temp_dir = tempfile.gettempdir()
+            temp_file_path = os.path.join(temp_dir, filename)
+            
+            with open(temp_file_path, 'wb') as f:
+                f.write(response.content)
+            
+            return {
+                "success": True,
+                "file_path": temp_file_path,
+                "filename": filename
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": f"下载文件失败: {str(e)}"}
+    
+    def _convert_docx_to_pdf(self, file_path: str, output_path: str) -> Dict[str, Any]:
+        """
+        将 Word 文档转换为 PDF
+        
+        Args:
+            file_path: Word 文件路径
+            output_path: 输出 PDF 文件路径
+        
+        Returns:
+            Dict[str, Any]: 转换结果
+        """
+        try:
+            doc = Document(file_path)
+            
+            pdf_doc = SimpleDocTemplate(
+                output_path,
+                pagesize=A4
+            )
+            
+            styles = getSampleStyleSheet()
+            try:
+                normal_style = ParagraphStyle(
+                    'ChineseNormal',
+                    parent=styles['Normal'],
+                    fontName='ChineseFont',
+                    fontSize=10,
+                    leading=14
+                )
+            except Exception:
+                normal_style = styles['Normal']
+            
+            story = []
+            
+            for para in doc.paragraphs:
+                if para.text.strip():
+                    try:
+                        story.append(Paragraph(para.text, normal_style))
+                    except Exception:
+                        story.append(Paragraph(para.text.encode('utf-8', errors='ignore').decode('utf-8'), normal_style))
+                    story.append(Spacer(1, 6))
+            
+            pdf_doc.build(story)
+            
+            return {"success": True}
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def _convert_txt_to_pdf(self, file_path: str, output_path: str) -> Dict[str, Any]:
+        """
+        将 TXT 文件转换为 PDF
+        
+        Args:
+            file_path: TXT 文件路径
+            output_path: 输出 PDF 文件路径
+        
+        Returns:
+            Dict[str, Any]: 转换结果
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            pdf_doc = SimpleDocTemplate(
+                output_path,
+                pagesize=A4
+            )
+            
+            styles = getSampleStyleSheet()
+            try:
+                normal_style = ParagraphStyle(
+                    'ChineseNormal',
+                    parent=styles['Normal'],
+                    fontName='ChineseFont',
+                    fontSize=10,
+                    leading=14
+                )
+            except Exception:
+                normal_style = styles['Normal']
+            
+            story = []
+            
+            paragraphs = content.split('\n')
+            for para_text in paragraphs:
+                if para_text.strip():
+                    try:
+                        story.append(Paragraph(para_text, normal_style))
+                    except Exception:
+                        story.append(Paragraph(para_text.encode('utf-8', errors='ignore').decode('utf-8'), normal_style))
+                    story.append(Spacer(1, 6))
+            
+            pdf_doc.build(story)
+            
+            return {"success": True}
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
 
 file_tools = FileOperationTools()
