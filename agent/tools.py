@@ -10,6 +10,9 @@ from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
 from utils.file_tools import file_tools
 from config import settings
+from utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 def extract_filename(path_or_filename: str) -> str:
@@ -119,12 +122,18 @@ class ReadFileTool(BaseTool):
         Returns:
             str: 读取结果（JSON格式）
         """
+        logger.info(f"工具调用: read_file - 输入参数: filename={filename}")
+        
         file_path = get_file_path(filename)
         result = file_tools.read_file_content(file_path)
         
         if result.get("success"):
             result["message"] = f"文件读取成功，共{result.get('page_count', 0)}页"
+            logger.info(f"工具调用成功: read_file - 文件: {filename}, 页数: {result.get('page_count', 0)}")
+        else:
+            logger.error(f"工具调用失败: read_file - 文件: {filename}, 错误: {result.get('error', '未知错误')}")
         
+        logger.debug(f"工具调用结果: read_file - {json.dumps(result, ensure_ascii=False)[:200]}")
         return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -158,11 +167,14 @@ class HighlightTextInPDFTool(BaseTool):
         Returns:
             str: 操作结果（JSON格式），包含下载链接
         """
+        logger.info(f"工具调用: highlight_text_in_pdf - 输入参数: filename={filename}, highlight_texts={highlight_texts}")
+        
         file_path = get_file_path(filename)
         output_filename = get_output_filename(filename, "highlighted")
         result = file_tools.highlight_text_in_pdf(file_path, highlight_texts, output_filename)
         
         if result.get("success"):
+            logger.info(f"工具调用成功: highlight_text_in_pdf - 输出文件: {output_filename}")
             return build_result(
                 success=True,
                 message=f"PDF标注完成，已生成文件: {output_filename}",
@@ -171,6 +183,7 @@ class HighlightTextInPDFTool(BaseTool):
                 original_filename=extract_filename(filename)
             )
         else:
+            logger.error(f"工具调用失败: highlight_text_in_pdf - 错误: {result.get('error', 'PDF标注失败')}")
             return build_result(
                 success=False,
                 message=result.get("error", "PDF标注失败")
@@ -209,11 +222,14 @@ class ModifyTextInPDFTool(BaseTool):
         Returns:
             str: 操作结果（JSON格式），包含下载链接
         """
+        logger.info(f"工具调用: modify_text_in_pdf - 输入参数: filename={filename}, modifications={modifications}")
+        
         file_path = get_file_path(filename)
         output_filename = get_output_filename(filename, "modified")
         result = file_tools.modify_text_in_pdf(file_path, modifications, output_filename)
         
         if result.get("success"):
+            logger.info(f"工具调用成功: modify_text_in_pdf - 输出文件: {output_filename}")
             return build_result(
                 success=True,
                 message=f"PDF修改完成，已生成文件: {output_filename}",
@@ -222,6 +238,7 @@ class ModifyTextInPDFTool(BaseTool):
                 original_filename=extract_filename(filename)
             )
         else:
+            logger.error(f"工具调用失败: modify_text_in_pdf - 错误: {result.get('error', 'PDF修改失败')}")
             return build_result(
                 success=False,
                 message=result.get("error", "PDF修改失败")
@@ -258,11 +275,14 @@ class HighlightTextInDocxTool(BaseTool):
         Returns:
             str: 操作结果（JSON格式），包含下载链接
         """
+        logger.info(f"工具调用: highlight_text_in_docx - 输入参数: filename={filename}, highlight_texts={highlight_texts}")
+        
         file_path = get_file_path(filename)
         output_filename = get_output_filename(filename, "highlighted")
         result = file_tools.create_highlighted_docx(file_path, highlight_texts, output_filename)
         
         if result.get("success"):
+            logger.info(f"工具调用成功: highlight_text_in_docx - 输出文件: {output_filename}")
             return build_result(
                 success=True,
                 message=f"Word标注完成，已生成文件: {output_filename}",
@@ -271,6 +291,7 @@ class HighlightTextInDocxTool(BaseTool):
                 original_filename=extract_filename(filename)
             )
         else:
+            logger.error(f"工具调用失败: highlight_text_in_docx - 错误: {result.get('error', 'Word标注失败')}")
             return build_result(
                 success=False,
                 message=result.get("error", "Word标注失败")
@@ -309,11 +330,14 @@ class ModifyTextInDocxTool(BaseTool):
         Returns:
             str: 操作结果（JSON格式），包含下载链接
         """
+        logger.info(f"工具调用: modify_text_in_docx - 输入参数: filename={filename}, modifications={modifications}")
+        
         file_path = get_file_path(filename)
         output_filename = get_output_filename(filename, "modified")
         result = file_tools.modify_text_in_docx(file_path, modifications, output_filename)
         
         if result.get("success"):
+            logger.info(f"工具调用成功: modify_text_in_docx - 输出文件: {output_filename}")
             return build_result(
                 success=True,
                 message=f"Word修改完成，已生成文件: {output_filename}",
@@ -322,6 +346,7 @@ class ModifyTextInDocxTool(BaseTool):
                 original_filename=extract_filename(filename)
             )
         else:
+            logger.error(f"工具调用失败: modify_text_in_docx - 错误: {result.get('error', 'Word修改失败')}")
             return build_result(
                 success=False,
                 message=result.get("error", "Word修改失败")
@@ -360,6 +385,8 @@ class AddReviewCommentsTool(BaseTool):
         Returns:
             str: 操作结果（JSON格式），包含下载链接
         """
+        logger.info(f"工具调用: add_review_comments - 输入参数: filename={filename}, comments_count={len(comments)}")
+        
         file_path = get_file_path(filename)
         
         filename = extract_filename(filename)
@@ -369,6 +396,7 @@ class AddReviewCommentsTool(BaseTool):
         result = file_tools.add_review_comments(file_path, comments, output_filename)
         
         if result.get("success"):
+            logger.info(f"工具调用成功: add_review_comments - 输出文件: {output_filename}")
             return build_result(
                 success=True,
                 message=f"审查报告生成完成，已生成文件: {output_filename}",
@@ -377,10 +405,179 @@ class AddReviewCommentsTool(BaseTool):
                 original_filename=extract_filename(filename)
             )
         else:
+            logger.error(f"工具调用失败: add_review_comments - 错误: {result.get('error', '审查报告生成失败')}")
             return build_result(
                 success=False,
                 message=result.get("error", "审查报告生成失败")
             )
+
+
+class AddRuleInput(BaseModel):
+    """
+    添加规则工具的输入参数
+    """
+    title: str = Field(description="规则标题，简短概括规则内容，如'科研成果处置规则'")
+    content: str = Field(description="规则的详细内容描述，完整描述规则的具体要求")
+    rule_type: str = Field(default="global", description="规则类型：global-全局规则（对所有对话生效），conversation-对话规则（仅对特定对话生效）")
+    conversation_id: Optional[int] = Field(default=None, description="对话ID，仅当rule_type为conversation时需要提供")
+    category: Optional[str] = Field(default=None, description="规则分类，如：审计规则、合规规则、科研规则、财务规则等")
+    priority: Optional[int] = Field(default=0, description="优先级，数字越大优先级越高，默认为0")
+
+
+class AddRuleTool(BaseTool):
+    """
+    添加规则工具
+    
+    用于添加单条规章或规则到数据库
+    """
+    
+    name: str = "add_rule"
+    description: str = """【重要】添加一条规章或规则到数据库。当用户提到"添加规则"、"添加规章"、"记录规则"、"保存规则"等关键词时，必须调用此工具。
+
+参数要求：
+- title: 规则标题（必填），简短概括
+- content: 规则内容（必填），完整描述
+- rule_type: global（全局规则）或 conversation（对话规则），默认 global
+- category: 规则分类，如"科研规则"、"审计规则"等
+- priority: 优先级，数字越大优先级越高
+
+示例：
+用户："帮我添加一个全局规章：科研成果由个人自行处置"
+调用：add_rule(title="科研成果处置规则", content="科研成果由个人自行处置...", rule_type="global", category="科研规则")"""
+    args_schema: Type[BaseModel] = AddRuleInput
+    
+    def _run(
+        self,
+        title: str,
+        content: str,
+        rule_type: str = "global",
+        conversation_id: Optional[int] = None,
+        category: Optional[str] = None,
+        priority: int = 0
+    ) -> str:
+        """
+        执行添加规则操作
+        
+        Args:
+            title: 规则标题
+            content: 规则内容
+            rule_type: 规则类型
+            conversation_id: 对话ID
+            category: 规则分类
+            priority: 优先级
+        
+        Returns:
+            str: 操作结果（JSON格式）
+        """
+        logger.info(f"工具调用: add_rule - 输入参数: title={title}, content={content[:50]}..., rule_type={rule_type}, category={category}, priority={priority}")
+        
+        from db import get_db
+        from services.rule_service import RuleService
+        
+        try:
+            db = next(get_db())
+            rule_service = RuleService(db)
+            
+            rule = rule_service.create_rule(
+                title=title,
+                content=content,
+                rule_type=rule_type,
+                conversation_id=conversation_id,
+                category=category,
+                priority=priority
+            )
+            
+            result = {
+                "success": True,
+                "message": f"规则添加成功: {title}",
+                "rule_id": rule.id,
+                "rule_type": rule_type,
+                "title": title
+            }
+            
+            logger.info(f"工具调用成功: add_rule - ID: {rule.id}, 标题: {title}")
+            
+            return json.dumps(result, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"工具调用失败: add_rule - 错误: {str(e)}", exc_info=True)
+            result = {
+                "success": False,
+                "message": f"规则添加失败: {str(e)}"
+            }
+            return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+class AddRulesInput(BaseModel):
+    """
+    批量添加规则工具的输入参数
+    """
+    rules: List[Dict[str, Any]] = Field(description="规则列表，每项包含 title（标题）、content（内容）、rule_type（类型）、category（分类）、priority（优先级）等字段")
+    conversation_id: Optional[int] = Field(default=None, description="对话ID，用于对话规则")
+
+
+class AddRulesTool(BaseTool):
+    """
+    批量添加规则工具
+    
+    用于批量添加多条规章或规则到数据库
+    """
+    
+    name: str = "add_rules"
+    description: str = """批量添加多条规章或规则到数据库。
+
+使用场景：
+- 用户要求一次性添加多条规章或规则
+- 用户提到"添加这些规则"、"批量添加规章"等
+- 需要将多个相关规定一起保存
+
+参数说明：
+- rules: 规则列表，每项包含 title、content、rule_type、category、priority
+- conversation_id: 对话ID（可选）"""
+    args_schema: Type[BaseModel] = AddRulesInput
+    
+    def _run(
+        self,
+        rules: List[Dict[str, Any]],
+        conversation_id: Optional[int] = None
+    ) -> str:
+        """
+        执行批量添加规则操作
+        
+        Args:
+            rules: 规则列表
+            conversation_id: 对话ID
+        
+        Returns:
+            str: 操作结果（JSON格式）
+        """
+        logger.info(f"工具调用: add_rules - 输入参数: rules_count={len(rules)}, conversation_id={conversation_id}")
+        
+        from db import get_db
+        from services.rule_service import RuleService
+        
+        try:
+            db = next(get_db())
+            rule_service = RuleService(db)
+            
+            created_rules = rule_service.batch_create_rules(rules, conversation_id)
+            
+            result = {
+                "success": True,
+                "message": f"成功添加 {len(created_rules)} 条规则",
+                "count": len(created_rules),
+                "rule_ids": [rule.id for rule in created_rules]
+            }
+            
+            logger.info(f"工具调用成功: add_rules - 添加数量: {len(created_rules)}")
+            
+            return json.dumps(result, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"工具调用失败: add_rules - 错误: {str(e)}", exc_info=True)
+            result = {
+                "success": False,
+                "message": f"批量规则添加失败: {str(e)}"
+            }
+            return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 def get_file_tools() -> List[BaseTool]:
@@ -397,4 +594,6 @@ def get_file_tools() -> List[BaseTool]:
         HighlightTextInDocxTool(),
         ModifyTextInDocxTool(),
         AddReviewCommentsTool(),
+        AddRuleTool(),
+        AddRulesTool(),
     ]

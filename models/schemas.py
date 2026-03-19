@@ -197,3 +197,100 @@ class FileUploadResponse(BaseModel):
     file_path: str
     file_name: str
     file_size: int
+
+
+class RuleCreateRequest(BaseModel):
+    """
+    创建规则请求模型
+    
+    Attributes:
+        title: 规则标题
+        content: 规则内容
+        rule_type: 规则类型
+        conversation_id: 对话ID
+        category: 规则分类
+        priority: 优先级
+    """
+    title: str = Field(..., description="规则标题", min_length=1, max_length=255)
+    content: str = Field(..., description="规则内容", min_length=1)
+    rule_type: str = Field(default="global", description="规则类型：global-全局规则，conversation-对话规则")
+    conversation_id: Optional[int] = Field(None, description="对话ID（仅对话规则有效）")
+    category: Optional[str] = Field(None, description="规则分类", max_length=100)
+    priority: int = Field(default=0, description="优先级（数字越大优先级越高）")
+
+
+class RuleUpdateRequest(BaseModel):
+    """
+    更新规则请求模型
+    
+    Attributes:
+        title: 规则标题
+        content: 规则内容
+        rule_type: 规则类型
+        conversation_id: 对话ID
+        category: 规则分类
+        priority: 优先级
+        is_active: 是否启用
+    """
+    title: Optional[str] = Field(None, description="规则标题", min_length=1, max_length=255)
+    content: Optional[str] = Field(None, description="规则内容", min_length=1)
+    rule_type: Optional[str] = Field(None, description="规则类型：global-全局规则，conversation-对话规则")
+    conversation_id: Optional[int] = Field(None, description="对话ID（仅对话规则有效）")
+    category: Optional[str] = Field(None, description="规则分类", max_length=100)
+    priority: Optional[int] = Field(None, description="优先级（数字越大优先级越高）")
+    is_active: Optional[bool] = Field(None, description="是否启用")
+
+
+class RuleResponse(BaseModel):
+    """
+    规则响应模型
+    
+    Attributes:
+        id: 规则ID
+        title: 规则标题
+        content: 规则内容
+        rule_type: 规则类型
+        conversation_id: 对话ID
+        category: 规则分类
+        priority: 优先级
+        is_active: 是否启用
+        created_at: 创建时间
+        updated_at: 更新时间
+    """
+    id: int
+    title: str
+    content: str
+    rule_type: str
+    conversation_id: Optional[int]
+    category: Optional[str]
+    priority: int
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class RuleListResponse(BaseModel):
+    """
+    规则列表响应模型
+    
+    Attributes:
+        total: 总数
+        items: 规则列表
+    """
+    total: int
+    items: List[RuleResponse]
+
+
+class BatchAddRulesRequest(BaseModel):
+    """
+    批量添加规则请求模型
+    
+    Attributes:
+        rules: 规则列表
+        conversation_id: 对话ID
+    """
+    rules: List[RuleCreateRequest] = Field(..., description="规则列表")
+    conversation_id: Optional[int] = Field(None, description="对话ID（用于对话规则）")

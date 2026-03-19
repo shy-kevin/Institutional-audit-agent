@@ -20,7 +20,8 @@
 1. [知识库管理接口](#知识库管理接口)
 2. [对话管理接口](#对话管理接口)
 3. [智能问答接口](#智能问答接口)
-4. [系统接口](#系统接口)
+4. [规则管理接口](#规则管理接口)
+5. [系统接口](#系统接口)
 
 ---
 
@@ -576,6 +577,384 @@ data: {"content": "", "is_end": true}
   }
 }
 ```
+
+---
+
+## 规则管理接口
+
+### 1. 创建规则
+
+**接口说明：** 创建新的规则或规章，支持全局规则和对话规则。
+
+**请求方式：** `POST`
+
+**接口地址：** `/api/rule/create`
+
+**请求体：**
+
+```json
+{
+  "title": "审计文档审查规则",
+  "content": "所有审计文档必须包含审计目的、审计范围、审计方法和审计结论四个部分。",
+  "rule_type": "global",
+  "conversation_id": null,
+  "category": "审计规则",
+  "priority": 10
+}
+```
+
+**请求参数说明：**
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| title | string | 是 | 规则标题，长度1-255字符 |
+| content | string | 是 | 规则内容 |
+| rule_type | string | 否 | 规则类型：global（全局规则）或 conversation（对话规则），默认 global |
+| conversation_id | int | 否 | 对话ID，仅对话规则有效 |
+| category | string | 否 | 规则分类，如：审计规则、合规规则等 |
+| priority | int | 否 | 优先级，数字越大优先级越高，默认 0 |
+
+**响应示例：**
+
+```json
+{
+  "id": 1,
+  "title": "审计文档审查规则",
+  "content": "所有审计文档必须包含审计目的、审计范围、审计方法和审计结论四个部分。",
+  "rule_type": "global",
+  "conversation_id": null,
+  "category": "审计规则",
+  "priority": 10,
+  "is_active": true,
+  "created_at": "2024-01-01T10:00:00",
+  "updated_at": "2024-01-01T10:00:00"
+}
+```
+
+---
+
+### 2. 批量创建规则
+
+**接口说明：** 批量创建多条规则，适用于一次性添加多个相关规则。
+
+**请求方式：** `POST`
+
+**接口地址：** `/api/rule/batch`
+
+**请求体：**
+
+```json
+{
+  "rules": [
+    {
+      "title": "合规审查规则1",
+      "content": "所有合同必须经过法务部门审核。",
+      "rule_type": "global",
+      "category": "合规规则",
+      "priority": 8
+    },
+    {
+      "title": "合规审查规则2",
+      "content": "所有财务报表必须由财务总监签字确认。",
+      "rule_type": "global",
+      "category": "合规规则",
+      "priority": 9
+    }
+  ],
+  "conversation_id": null
+}
+```
+
+**响应示例：**
+
+```json
+{
+  "code": 200,
+  "message": "成功创建 2 条规则",
+  "data": {
+    "count": 2,
+    "rule_ids": [3, 4]
+  }
+}
+```
+
+---
+
+### 3. 获取规则列表
+
+**接口说明：** 分页获取规则列表，支持按类型、对话ID、分类、状态筛选。
+
+**请求方式：** `GET`
+
+**接口地址：** `/api/rule/list`
+
+**请求参数：**
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| skip | int | 否 | 跳过的记录数（分页偏移），默认 0 |
+| limit | int | 否 | 返回的最大记录数，默认 100 |
+| rule_type | string | 否 | 按规则类型筛选：global 或 conversation |
+| conversation_id | int | 否 | 按对话ID筛选 |
+| category | string | 否 | 按分类筛选 |
+| is_active | bool | 否 | 按启用状态筛选：true 或 false |
+
+**响应示例：**
+
+```json
+{
+  "total": 4,
+  "items": [
+    {
+      "id": 1,
+      "title": "审计文档审查规则",
+      "content": "所有审计文档必须包含审计目的、审计范围、审计方法和审计结论四个部分。",
+      "rule_type": "global",
+      "conversation_id": null,
+      "category": "审计规则",
+      "priority": 10,
+      "is_active": true,
+      "created_at": "2024-01-01T10:00:00",
+      "updated_at": "2024-01-01T10:00:00"
+    },
+    {
+      "id": 2,
+      "title": "本次对话专用规则",
+      "content": "本次对话中所有文件必须使用中文命名。",
+      "rule_type": "conversation",
+      "conversation_id": 1,
+      "category": "文件规则",
+      "priority": 5,
+      "is_active": true,
+      "created_at": "2024-01-01T11:00:00",
+      "updated_at": "2024-01-01T11:00:00"
+    }
+  ]
+}
+```
+
+---
+
+### 4. 获取规则详情
+
+**接口说明：** 根据ID获取指定规则的详细信息。
+
+**请求方式：** `GET`
+
+**接口地址：** `/api/rule/{rule_id}`
+
+**路径参数：**
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| rule_id | int | 是 | 规则ID |
+
+**响应示例：**
+
+```json
+{
+  "id": 1,
+  "title": "审计文档审查规则",
+  "content": "所有审计文档必须包含审计目的、审计范围、审计方法和审计结论四个部分。",
+  "rule_type": "global",
+  "conversation_id": null,
+  "category": "审计规则",
+  "priority": 10,
+  "is_active": true,
+  "created_at": "2024-01-01T10:00:00",
+  "updated_at": "2024-01-01T10:00:00"
+}
+```
+
+---
+
+### 5. 更新规则
+
+**接口说明：** 更新指定规则的信息。
+
+**请求方式：** `PUT`
+
+**接口地址：** `/api/rule/{rule_id}`
+
+**路径参数：**
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| rule_id | int | 是 | 规则ID |
+
+**请求体：**
+
+```json
+{
+  "title": "更新后的审计文档审查规则",
+  "content": "更新后的规则内容",
+  "rule_type": "global",
+  "category": "审计规则",
+  "priority": 15,
+  "is_active": true
+}
+```
+
+**响应示例：**
+
+```json
+{
+  "id": 1,
+  "title": "更新后的审计文档审查规则",
+  "content": "更新后的规则内容",
+  "rule_type": "global",
+  "conversation_id": null,
+  "category": "审计规则",
+  "priority": 15,
+  "is_active": true,
+  "created_at": "2024-01-01T10:00:00",
+  "updated_at": "2024-01-01T12:00:00"
+}
+```
+
+---
+
+### 6. 删除规则
+
+**接口说明：** 删除指定规则。
+
+**请求方式：** `DELETE`
+
+**接口地址：** `/api/rule/{rule_id}`
+
+**路径参数：**
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| rule_id | int | 是 | 规则ID |
+
+**响应示例：**
+
+```json
+{
+  "code": 200,
+  "message": "规则删除成功",
+  "data": null
+}
+```
+
+---
+
+### 7. 切换规则启用状态
+
+**接口说明：** 切换规则的启用/禁用状态。
+
+**请求方式：** `POST`
+
+**接口地址：** `/api/rule/{rule_id}/toggle`
+
+**路径参数：**
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| rule_id | int | 是 | 规则ID |
+
+**响应示例：**
+
+```json
+{
+  "id": 1,
+  "title": "审计文档审查规则",
+  "content": "所有审计文档必须包含审计目的、审计范围、审计方法和审计结论四个部分。",
+  "rule_type": "global",
+  "conversation_id": null,
+  "category": "审计规则",
+  "priority": 10,
+  "is_active": false,
+  "created_at": "2024-01-01T10:00:00",
+  "updated_at": "2024-01-01T12:00:00"
+}
+```
+
+---
+
+### 8. 获取对话的活跃规则
+
+**接口说明：** 获取指定对话的所有活跃规则，包括全局规则和该对话的专属规则。
+
+**请求方式：** `GET`
+
+**接口地址：** `/api/rule/conversation/{conversation_id}/active`
+
+**路径参数：**
+
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| conversation_id | int | 是 | 对话ID |
+
+**响应示例：**
+
+```json
+{
+  "total": 3,
+  "items": [
+    {
+      "id": 1,
+      "title": "审计文档审查规则",
+      "content": "所有审计文档必须包含审计目的、审计范围、审计方法和审计结论四个部分。",
+      "rule_type": "global",
+      "conversation_id": null,
+      "category": "审计规则",
+      "priority": 10,
+      "is_active": true,
+      "created_at": "2024-01-01T10:00:00",
+      "updated_at": "2024-01-01T10:00:00"
+    },
+    {
+      "id": 2,
+      "title": "本次对话专用规则",
+      "content": "本次对话中所有文件必须使用中文命名。",
+      "rule_type": "conversation",
+      "conversation_id": 1,
+      "category": "文件规则",
+      "priority": 5,
+      "is_active": true,
+      "created_at": "2024-01-01T11:00:00",
+      "updated_at": "2024-01-01T11:00:00"
+    }
+  ]
+}
+```
+
+---
+
+### 规则类型说明
+
+| 类型 | 说明 |
+|------|------|
+| global | 全局规则，对所有对话生效 |
+| conversation | 对话规则，仅对特定对话生效 |
+
+---
+
+### 模型调用工具
+
+智能体可以通过以下工具自动添加规则：
+
+**1. 添加单条规则工具**
+
+- **工具名：** `add_rule`
+- **功能：** 添加一条规章或规则到数据库
+- **参数：**
+  - `title`：规则标题
+  - `content`：规则内容
+  - `rule_type`：规则类型（global/conversation）
+  - `conversation_id`：对话ID（可选）
+  - `category`：规则分类（可选）
+  - `priority`：优先级（可选）
+
+**2. 批量添加规则工具**
+
+- **工具名：** `add_rules`
+- **功能：** 批量添加多条规章或规则到数据库
+- **参数：**
+  - `rules`：规则列表
+  - `conversation_id`：对话ID（可选）
 
 ---
 
