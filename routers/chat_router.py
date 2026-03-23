@@ -130,7 +130,8 @@ async def chat_stream(
                 messages=history[:-1],
                 knowledge_base_id=request.knowledge_base_id,
                 file_content=file_content,
-                file_paths=request.file_paths
+                file_paths=request.file_paths,
+                conversation_id=request.conversation_id
             )
             
             if result.get("tool_calls"):
@@ -272,7 +273,8 @@ async def chat_sync(
             messages=history[:-1],
             knowledge_base_id=request.knowledge_base_id,
             file_content=file_content,
-            file_paths=request.file_paths
+            file_paths=request.file_paths,
+            conversation_id=request.conversation_id
         )
         
         response = result.get("response", "")

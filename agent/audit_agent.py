@@ -5,15 +5,15 @@
 
 import json
 import logging
-from typing import TypedDict, Annotated, Sequence, Optional, List
+from typing import TypedDict, Annotated, Sequence, Optional, List, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables import RunnableConfig
 from langchain_ollama import ChatOllama
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
-from langgraph.prebuilt import ToolNode
 from config import settings
-from agent.tools import get_file_tools
+from agent.tools import get_file_tools, current_conversation_id
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,7 +28,9 @@ class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     question: str
     context: Optional[str]
+    rules_context: Optional[str]
     knowledge_base_id: Optional[int]
+    conversation_id: Optional[int]
     file_content: Optional[str]
     file_paths: Optional[List[str]]
     iteration_count: int
@@ -47,26 +49,92 @@ SYSTEM_PROMPT = """你是制度审查智能助手，专门帮助企业审查制�
 6. add_review_comments: 生成审查报告
 
 **规则管理工具：**
-7. add_rule: 添加一条规章或规则到数据库
+7. add_rule: 添加用户明确表达的规章或规则到数据库
+   - 【重要】只能添加用户在【输入框中直接输入的文字】作为规则
+   - 【禁止】绝对不能把用户上传的文件内容（PDF、Word等）当成规则添加
    - 参数：title（规则标题）、content（规则内容）、rule_type（类型：global全局规则/conversation对话规则）、category（分类）、priority（优先级）
-   - 当用户要求添加规章、规则、制度要求时，使用此工具
    - 全局规则对所有对话生效，对话规则仅对当前对话生效
 
 8. add_rules: 批量添加多条规章或规则到数据库
+   - 【重要】只能添加用户在输入框中明确表达的规定、要求
+   - 【禁止】不能把文件内容添加到规则中
    - 参数：rules（规则列表）、conversation_id（对话ID）
-   - 当用户要求添加多条规章或规则时，使用此工具
 
 重要规则：
 - 工具参数中的 filename 只需要输入文件名，不要输入路径
 - 例如：如果文件是 "uploads/temp/新法律法规.pdf"，你只需要输入 "新法律法规.pdf"
 - 当用户要求添加规章、规则时，主动调用 add_rule 或 add_rules 工具
 - 完成任务后，直接告诉用户结果，不要重复调用工具
+- 【关键】add_rule 和 add_rules 只能用于添加用户主动表达的规定、要求，禁止用于添加文件内容
 
-当前上下文信息：
+【重要】内容优先级说明：
+- 规则库内容（全局规则和对话规则）的优先级最高，必须优先遵守
+- 当规则库内容与向量库检索内容存在冲突或歧义时，以规则库内容为准
+- 规则库内容是用户明确制定的规定，具有最高权威性
+- 对话规则和全局规则冲突的时候，以对话规则优先级更高
+
+{rules_context}
+
+【注意】以下上下文信息来自向量库检索，仅供参考，如有冲突请以规则库内容为准：
 {context}
 
 当前可用的文件名：
 {file_paths}"""
+
+
+class ConversationAwareToolNode:
+    """
+    自定义工具节点，确保在工具执行时 conversation_id 可用
+    
+    解决 LangGraph 默认 ToolNode 在执行工具时 ContextVar 无法正确传递的问题
+    """
+    
+    def __init__(self, tools: list):
+        self.tools = {tool.name: tool for tool in tools}
+    
+    def __call__(self, state: dict, config: RunnableConfig = None) -> dict:
+        messages = state.get("messages", [])
+        if not messages:
+            return {"messages": []}
+        
+        last_message = messages[-1]
+        if not hasattr(last_message, "tool_calls") or not last_message.tool_calls:
+            return {"messages": []}
+        
+        conversation_id = state.get("conversation_id")
+        if conversation_id:
+            current_conversation_id.set(conversation_id)
+            logger.info(f"ToolNode 设置 conversation_id: {conversation_id}")
+        
+        tool_messages = []
+        for tool_call in last_message.tool_calls:
+            tool_name = tool_call.get("name")
+            tool_args = tool_call.get("args", {})
+            tool_id = tool_call.get("id")
+            
+            if tool_name not in self.tools:
+                tool_messages.append(ToolMessage(
+                    content=f"工具 {tool_name} 不存在",
+                    tool_call_id=tool_id
+                ))
+                continue
+            
+            tool = self.tools[tool_name]
+            try:
+                result = tool.invoke(tool_args)
+                tool_messages.append(ToolMessage(
+                    content=result,
+                    tool_call_id=tool_id
+                ))
+                logger.info(f"工具 {tool_name} 执行成功")
+            except Exception as e:
+                logger.error(f"工具 {tool_name} 执行失败: {str(e)}", exc_info=True)
+                tool_messages.append(ToolMessage(
+                    content=f"工具执行失败: {str(e)}",
+                    tool_call_id=tool_id
+                ))
+        
+        return {"messages": tool_messages}
 
 
 class AuditAgent:
@@ -112,7 +180,7 @@ class AuditAgent:
         workflow.add_node("agent", self._agent_node)
         
         if self.enable_tools and self.tools:
-            workflow.add_node("tools", ToolNode(self.tools))
+            workflow.add_node("tools", ConversationAwareToolNode(self.tools))
         
         workflow.set_entry_point("retrieve")
         workflow.add_edge("retrieve", "agent")
@@ -148,6 +216,37 @@ class AuditAgent:
     
     def _retrieve_node(self, state: AgentState) -> dict:
         context = ""
+        rules_context = ""
+        
+        from db import get_db
+        from services.rule_service import RuleService
+        
+        try:
+            db = next(get_db())
+            rule_service = RuleService(db)
+            
+            conversation_id = state.get("conversation_id")
+            active_rules = rule_service.get_active_rules_for_conversation(conversation_id)
+            
+            if active_rules:
+                global_rules = [r for r in active_rules if r.rule_type.value == "global"]
+                conversation_rules = [r for r in active_rules if r.rule_type.value == "conversation"]
+                
+                if global_rules:
+                    rules_context += "【全局规则】（适用于所有对话）：\n"
+                    for rule in global_rules:
+                        rules_context += f"- {rule.title}: {rule.content}\n"
+                    rules_context += "\n"
+                
+                if conversation_rules:
+                    rules_context += "【对话规则】（仅适用于当前对话）：\n"
+                    for rule in conversation_rules:
+                        rules_context += f"- {rule.title}: {rule.content}\n"
+                    rules_context += "\n"
+                
+                logger.info(f"检索到 {len(active_rules)} 条活跃规则（全局: {len(global_rules)}, 对话: {len(conversation_rules)}")
+        except Exception as e:
+            logger.error(f"检索规则失败: {str(e)}", exc_info=True)
         
         if state.get("knowledge_base_id"):
             from db.postgres_session import vector_store_manager
@@ -157,13 +256,15 @@ class AuditAgent:
                 vector_store = vector_store_manager.get_vector_store(collection_name)
                 docs = vector_store.similarity_search(state["question"], k=4)
                 context = "\n\n".join([doc.page_content for doc in docs])
-            except Exception:
+                logger.info(f"从向量库检索到 {len(docs)} 条相关文档")
+            except Exception as e:
+                logger.error(f"向量库检索失败: {str(e)}")
                 context = ""
         
         if state.get("file_content"):
             context = f"{context}\n\n上传文件内容：\n{state['file_content']}" if context else f"上传文件内容：\n{state['file_content']}"
         
-        return {"context": context}
+        return {"context": context, "rules_context": rules_context}
     
     def _agent_node(self, state: AgentState) -> dict:
         iteration_count = state.get("iteration_count", 0)
@@ -182,6 +283,7 @@ class AuditAgent:
         
         full_prompt = prompt.format(
             context=state.get("context", ""),
+            rules_context=state.get("rules_context", ""),
             file_paths=file_paths_str,
             messages=state.get("messages", []),
             question=state["question"]
@@ -211,6 +313,7 @@ class AuditAgent:
         
         response = chain.invoke({
             "context": state.get("context", ""),
+            "rules_context": state.get("rules_context", ""),
             "file_paths": file_paths_str,
             "messages": state.get("messages", []),
             "question": state["question"]
@@ -231,8 +334,12 @@ class AuditAgent:
         messages: list,
         knowledge_base_id: Optional[int] = None,
         file_content: Optional[str] = None,
-        file_paths: Optional[List[str]] = None
+        file_paths: Optional[List[str]] = None,
+        conversation_id: Optional[int] = None
     ) -> dict:
+        current_conversation_id.set(conversation_id)
+        logger.info(f"设置 current_conversation_id: {conversation_id}")
+        
         formatted_messages = []
         for msg in messages:
             if msg["role"] == "user":
@@ -244,13 +351,16 @@ class AuditAgent:
             "messages": formatted_messages,
             "question": question,
             "knowledge_base_id": knowledge_base_id,
+            "conversation_id": conversation_id,
             "file_content": file_content,
             "file_paths": file_paths,
             "context": None,
+            "rules_context": None,
             "iteration_count": 0
         }
         
         logger.info(f"开始执行 chat_with_tools, question: {question}")
+        logger.info(f"conversation_id: {conversation_id}")
         logger.info(f"file_paths: {file_paths}")
         
         final_state = None

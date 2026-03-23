@@ -6,6 +6,7 @@ LangChain 工具定义模块
 import os
 import json
 from typing import Optional, List, Dict, Any, Type
+from contextvars import ContextVar
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
 from utils.file_tools import file_tools
@@ -13,6 +14,8 @@ from config import settings
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+current_conversation_id: ContextVar[Optional[int]] = ContextVar("current_conversation_id", default=None)
 
 
 def extract_filename(path_or_filename: str) -> str:
@@ -428,22 +431,35 @@ class AddRuleTool(BaseTool):
     """
     添加规则工具
     
-    用于添加单条规章或规则到数据库
+    用于添加用户明确表达的规章或规则到数据库
     """
     
     name: str = "add_rule"
-    description: str = """【重要】添加一条规章或规则到数据库。当用户提到"添加规则"、"添加规章"、"记录规则"、"保存规则"等关键词时，必须调用此工具。
+    description: str = """【重要】添加用户明确表达的规章或规则到数据库。
+
+【关键说明】
+- 只能添加用户在【输入框中直接输入的文字】作为规则
+- 绝对不能把用户上传的文件内容（如PDF、Word文档的内容）当成规则添加
+- 只有用户明确说"添加规则"、"添加规章"、"记录这个要求"等时，才调用此工具
+- 规则内容应该是用户主动表达的规定、要求或制度
+
+【正确示例】
+用户输入："帮我添加一个规则：科研成果由个人自行处置"
+→ 调用：add_rule(title="科研成果处置规则", content="科研成果由个人自行处置...", rule_type="global")
+
+用户输入："记录一下这个要求：所有合同必须法务审核"
+→ 调用：add_rule(title="合同审核要求", content="所有合同必须经过法务部门审核", rule_type="global")
+
+【错误示例】
+用户上传了文件，文件中有大量内容
+→ 不要把文件内容添加到规则中
 
 参数要求：
 - title: 规则标题（必填），简短概括
-- content: 规则内容（必填），完整描述
+- content: 规则内容（必填），只添加用户明确表达的要求
 - rule_type: global（全局规则）或 conversation（对话规则），默认 global
 - category: 规则分类，如"科研规则"、"审计规则"等
-- priority: 优先级，数字越大优先级越高
-
-示例：
-用户："帮我添加一个全局规章：科研成果由个人自行处置"
-调用：add_rule(title="科研成果处置规则", content="科研成果由个人自行处置...", rule_type="global", category="科研规则")"""
+- priority: 优先级，数字越大优先级越高"""
     args_schema: Type[BaseModel] = AddRuleInput
     
     def _run(
@@ -469,7 +485,11 @@ class AddRuleTool(BaseTool):
         Returns:
             str: 操作结果（JSON格式）
         """
-        logger.info(f"工具调用: add_rule - 输入参数: title={title}, content={content[:50]}..., rule_type={rule_type}, category={category}, priority={priority}")
+        if rule_type == "conversation" and conversation_id is None:
+            conversation_id = current_conversation_id.get()
+            logger.info(f"从上下文获取 conversation_id: {conversation_id}")
+        
+        logger.info(f"工具调用: add_rule - 输入参数: title={title}, content={content[:50]}..., rule_type={rule_type}, conversation_id={conversation_id}, category={category}, priority={priority}")
         
         from db import get_db
         from services.rule_service import RuleService
@@ -492,10 +512,11 @@ class AddRuleTool(BaseTool):
                 "message": f"规则添加成功: {title}",
                 "rule_id": rule.id,
                 "rule_type": rule_type,
-                "title": title
+                "title": title,
+                "conversation_id": conversation_id
             }
             
-            logger.info(f"工具调用成功: add_rule - ID: {rule.id}, 标题: {title}")
+            logger.info(f"工具调用成功: add_rule - ID: {rule.id}, 标题: {title}, conversation_id: {conversation_id}")
             
             return json.dumps(result, ensure_ascii=False, indent=2)
         except Exception as e:
@@ -550,6 +571,10 @@ class AddRulesTool(BaseTool):
         Returns:
             str: 操作结果（JSON格式）
         """
+        if conversation_id is None:
+            conversation_id = current_conversation_id.get()
+            logger.info(f"从上下文获取 conversation_id: {conversation_id}")
+        
         logger.info(f"工具调用: add_rules - 输入参数: rules_count={len(rules)}, conversation_id={conversation_id}")
         
         from db import get_db
@@ -565,10 +590,11 @@ class AddRulesTool(BaseTool):
                 "success": True,
                 "message": f"成功添加 {len(created_rules)} 条规则",
                 "count": len(created_rules),
-                "rule_ids": [rule.id for rule in created_rules]
+                "rule_ids": [rule.id for rule in created_rules],
+                "conversation_id": conversation_id
             }
             
-            logger.info(f"工具调用成功: add_rules - 添加数量: {len(created_rules)}")
+            logger.info(f"工具调用成功: add_rules - 添加数量: {len(created_rules)}, conversation_id: {conversation_id}")
             
             return json.dumps(result, ensure_ascii=False, indent=2)
         except Exception as e:
