@@ -259,7 +259,7 @@ async def add_review_comments(
     return result
 
 
-@router.get("/download/{filename}", summary="下载文件")
+@router.get("/download/{filename:path}", summary="下载文件")
 async def download_file(
     filename: str,
     preview: bool = False
@@ -274,15 +274,19 @@ async def download_file(
     Returns:
         FileResponse: 文件下载或预览响应
     """
-    logger.info(f"文件下载请求 - 文件名: {filename}, 预览模式: {preview}")
+    from fastapi.responses import FileResponse
+    from urllib.parse import unquote
     
-    file_path = file_tools.get_output_file(filename)
+    decoded_filename = unquote(filename)
+    logger.info(f"文件下载请求 - 原始文件名: {filename}, 解码后: {decoded_filename}, 预览模式: {preview}")
+    
+    file_path = file_tools.get_output_file(decoded_filename)
     
     if not file_path:
-        logger.error(f"文件不存在 - 文件名: {filename}")
+        logger.error(f"文件不存在 - 文件名: {decoded_filename}")
         raise HTTPException(status_code=404, detail="文件不存在")
     
-    file_ext = Path(filename).suffix.lower()
+    file_ext = Path(decoded_filename).suffix.lower()
     
     if file_ext == ".pdf":
         media_type = "application/pdf"
@@ -295,14 +299,14 @@ async def download_file(
     
     disposition = "inline" if preview else "attachment"
     
-    encoded_filename = quote(filename, safe='')
+    encoded_filename = quote(decoded_filename, safe='')
     content_disposition = f"{disposition}; filename*=UTF-8''{encoded_filename}"
     
-    logger.debug(f"文件响应 - 类型: {media_type}, 模式: {disposition}")
+    logger.info(f"文件响应 - 路径: {file_path}, 类型: {media_type}, 模式: {disposition}")
     
     return FileResponse(
         path=file_path,
-        filename=filename,
+        filename=decoded_filename,
         media_type=media_type,
         headers={
             "Content-Disposition": content_disposition

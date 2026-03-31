@@ -545,15 +545,21 @@ class FileOperationTools:
             filename: 文件名
         
         Returns:
-            Optional[str]: 文件路径，不存在则返回None
+            Optional[str]: 文件绝对路径，不存在则返回None
         """
         file_path = self.output_dir / filename
         if file_path.exists():
-            return str(file_path)
+            return str(file_path.resolve())
         
         converted_file = self.converted_dir / filename
         if converted_file.exists():
-            return str(converted_file)
+            return str(converted_file.resolve())
+        
+        reports_dir = self.upload_dir / "reports"
+        if reports_dir.exists():
+            report_file = reports_dir / filename
+            if report_file.exists():
+                return str(report_file.resolve())
         
         return None
     

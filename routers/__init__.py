@@ -8,6 +8,7 @@ from .conversation_router import router as conversation_router
 from .chat_router import router as chat_router
 from .file_router import router as file_router
 from .rule_router import router as rule_router
+from .audit_router import router as audit_router
 
 api_router = APIRouter()
 
@@ -16,5 +17,6 @@ api_router.include_router(conversation_router, prefix="/conversation", tags=["�
 api_router.include_router(chat_router, prefix="/chat", tags=["智能问答"])
 api_router.include_router(file_router, prefix="/file", tags=["文件操作"])
 api_router.include_router(rule_router, prefix="/rule", tags=["规则管理"])
+api_router.include_router(audit_router, prefix="/audit", tags=["审查管理"])
 
 __all__ = ["api_router"]
