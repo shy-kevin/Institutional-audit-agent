@@ -307,18 +307,72 @@ class AuditAgent:
         except Exception as e:
             logger.error(f"检索规则失败: {str(e)}", exc_info=True)
         
+        question = state.get("question", "")
+        
         if state.get("knowledge_base_id"):
-            from db.postgres_session import vector_store_manager
-            
-            collection_name = f"kb_{state['knowledge_base_id']}"
             try:
-                vector_store = vector_store_manager.get_vector_store(collection_name)
-                docs = vector_store.similarity_search(state["question"], k=4)
-                context = "\n\n".join([doc.page_content for doc in docs])
-                logger.info(f"从向量库检索到 {len(docs)} 条相关文档")
+                import asyncio
+                from services.knowledge_base_service import KnowledgeBaseService
+                
+                db = next(get_db())
+                service = KnowledgeBaseService(db)
+                
+                async def search_knowledge():
+                    return await service.search_similar_documents(
+                        knowledge_base_id=state["knowledge_base_id"],
+                        query=question,
+                        k=4
+                    )
+                
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(asyncio.run, search_knowledge())
+                            docs = future.result()
+                    else:
+                        docs = loop.run_until_complete(search_knowledge())
+                except RuntimeError:
+                    docs = asyncio.run(search_knowledge())
+                
+                if docs:
+                    context = "\n\n".join([doc.get("content", "") for doc in docs if doc.get("content")])
+                    logger.info(f"从外部知识库API检索到 {len(docs)} 条相关文档")
             except Exception as e:
-                logger.error(f"向量库检索失败: {str(e)}")
+                logger.error(f"外部知识库检索失败: {str(e)}", exc_info=True)
                 context = ""
+        elif question:
+            try:
+                import asyncio
+                from services.knowledge_api_client import knowledge_api_client
+                
+                async def global_search():
+                    return await knowledge_api_client.search(
+                        query=question,
+                        top_k=5,
+                        search_type="hybrid"
+                    )
+                
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(asyncio.run, global_search())
+                            search_result = future.result()
+                    else:
+                        search_result = loop.run_until_complete(global_search())
+                except RuntimeError:
+                    search_result = asyncio.run(global_search())
+                
+                if search_result.get("success"):
+                    items = search_result.get("results", search_result.get("items", []))
+                    if items:
+                        context = "\n\n".join([item.get("content", "") for item in items if item.get("content")])
+                        logger.info(f"全局知识检索到 {len(items)} 条相关文档")
+            except Exception as e:
+                logger.error(f"全局知识检索失败: {str(e)}", exc_info=True)
         
         if state.get("file_content"):
             context = f"{context}\n\n上传文件内容：\n{state['file_content']}" if context else f"上传文件内容：\n{state['file_content']}"

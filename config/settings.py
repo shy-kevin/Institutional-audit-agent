@@ -77,6 +77,11 @@ class Settings(BaseSettings):
     # 对话配置
     MAX_HISTORY_LENGTH: int = 20
     
+    # 外部知识库API配置
+    KNOWLEDGE_API_URL: str = "http://121.48.164.135:30700"
+    KNOWLEDGE_API_TIMEOUT: int = 30
+    KNOWLEDGE_API_KEY: Optional[str] = None
+    
     class Config:
         env_file = ".env"
         case_sensitive = True

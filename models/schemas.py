@@ -25,7 +25,7 @@ class KnowledgeBaseResponse(BaseModel):
     知识库响应模型
     
     Attributes:
-        id: 知识库ID
+        id: 知识库ID（外部API的UUID）
         name: 知识库名称
         description: 知识库描述
         file_name: 文件名
@@ -34,7 +34,7 @@ class KnowledgeBaseResponse(BaseModel):
         created_at: 创建时间
         updated_at: 更新时间
     """
-    id: int
+    id: str
     name: str
     description: Optional[str]
     file_name: str

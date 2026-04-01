@@ -20,6 +20,7 @@ class KnowledgeBase(Base):
         file_path: 上传文件存储路径
         file_name: 原始文件名
         file_size: 文件大小（字节）
+        external_file_id: 外部知识库平台的文件ID
         status: 知识库状态（processing/completed/failed）
         created_at: 创建时间
         updated_at: 更新时间
@@ -33,6 +34,7 @@ class KnowledgeBase(Base):
     file_path = Column(String(500), nullable=False, comment="文件存储路径")
     file_name = Column(String(255), nullable=False, comment="原始文件名")
     file_size = Column(Integer, nullable=True, comment="文件大小（字节）")
+    external_file_id = Column(String(255), nullable=True, comment="外部知识库平台文件ID")
     status = Column(String(50), default="processing", comment="状态：processing/completed/failed")
     created_at = Column(DateTime, default=datetime.now, comment="创建时间")
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment="更新时间")
@@ -51,6 +53,7 @@ class KnowledgeBase(Base):
             "file_path": self.file_path,
             "file_name": self.file_name,
             "file_size": self.file_size,
+            "external_file_id": self.external_file_id,
             "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None
