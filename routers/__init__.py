@@ -9,14 +9,20 @@ from .chat_router import router as chat_router
 from .file_router import router as file_router
 from .rule_router import router as rule_router
 from .audit_router import router as audit_router
+from .auth_router import router as auth_router
+from .draft_router import router as draft_router
+from .template_router import router as template_router
 
 api_router = APIRouter()
 
+api_router.include_router(auth_router, prefix="/auth", tags=["用户认证"])
 api_router.include_router(knowledge_base_router, prefix="/knowledge-base", tags=["知识库管理"])
 api_router.include_router(conversation_router, prefix="/conversation", tags=["对话管理"])
 api_router.include_router(chat_router, prefix="/chat", tags=["智能问答"])
 api_router.include_router(file_router, prefix="/file", tags=["文件操作"])
 api_router.include_router(rule_router, prefix="/rule", tags=["规则管理"])
 api_router.include_router(audit_router, prefix="/audit", tags=["审查管理"])
+api_router.include_router(draft_router, prefix="/document", tags=["智能编制助手"])
+api_router.include_router(template_router, prefix="/template", tags=["模板管理"])
 
 __all__ = ["api_router"]

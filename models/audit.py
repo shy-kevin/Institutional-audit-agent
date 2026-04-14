@@ -65,6 +65,7 @@ class AuditTask(Base):
     progress = Column(Integer, default=0, comment="进度百分比")
     config_id = Column(Integer, ForeignKey("audit_configs.id"), nullable=True, comment="审查配置ID")
     conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=True, comment="关联对话ID")
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, comment="审查人ID")
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     completed_at = Column(DateTime, nullable=True, comment="完成时间")
@@ -107,6 +108,7 @@ class AuditResult(Base):
     consistency_issues = Column(Integer, default=0, comment="一致性问题数")
     format_issues = Column(Integer, default=0, comment="形式问题数")
     status = Column(Enum(ResultStatus), default=ResultStatus.PENDING_REVIEW, comment="结果状态")
+    reviewer_id = Column(Integer, ForeignKey("users.id"), nullable=True, comment="审查人ID")
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -136,6 +138,7 @@ class AuditTrail(Base):
     task_id = Column(Integer, ForeignKey("audit_tasks.id"), nullable=False, comment="任务ID")
     action = Column(String(255), nullable=False, comment="操作动作")
     actor = Column(String(100), comment="操作人")
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, comment="操作用户ID")
     details = Column(Text, comment="操作详情")
     created_at = Column(DateTime, default=datetime.now)
 

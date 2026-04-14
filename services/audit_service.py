@@ -20,35 +20,45 @@ class AuditService:
     
     # ==================== 统计相关 ====================
     
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self, user_id: Optional[int] = None) -> Dict[str, Any]:
         """获取审查统计数据"""
         today = datetime.now().date()
         today_start = datetime.combine(today, datetime.min.time())
         
-        today_count = self.db.query(AuditTask).filter(
+        task_query = self.db.query(AuditTask)
+        if user_id:
+            task_query = task_query.filter(AuditTask.user_id == user_id)
+        
+        today_count = task_query.filter(
             AuditTask.created_at >= today_start
         ).count()
         
-        batch_count = self.db.query(AuditTask).filter(
+        batch_count = task_query.filter(
             AuditTask.audit_type == AuditType.REVISION
         ).count()
         
-        risk_count = self.db.query(AuditIssue).filter(
+        issue_query = self.db.query(AuditIssue)
+        if user_id:
+            task_ids = [t.id for t in task_query.all()]
+            result_ids = [r.id for r in self.db.query(AuditResult).filter(AuditResult.task_id.in_(task_ids)).all()]
+            issue_query = issue_query.filter(AuditIssue.result_id.in_(result_ids))
+        
+        risk_count = issue_query.filter(
             AuditIssue.severity == RiskLevel.HIGH
         ).count()
         
-        completed_count = self.db.query(AuditTask).filter(
+        completed_count = task_query.filter(
             AuditTask.status == TaskStatus.COMPLETED
         ).count()
         
-        total_issues = self.db.query(AuditIssue).count()
-        compliance_count = self.db.query(AuditIssue).filter(
+        total_issues = issue_query.count()
+        compliance_count = issue_query.filter(
             AuditIssue.issue_type == IssueType.COMPLIANCE
         ).count()
-        consistency_count = self.db.query(AuditIssue).filter(
+        consistency_count = issue_query.filter(
             AuditIssue.issue_type == IssueType.CONSISTENCY
         ).count()
-        format_count = self.db.query(AuditIssue).filter(
+        format_count = issue_query.filter(
             AuditIssue.issue_type == IssueType.FORMAT
         ).count()
         
@@ -79,7 +89,8 @@ class AuditService:
         document_name: str,
         audit_type: str = "draft",
         config_id: Optional[int] = None,
-        conversation_id: Optional[int] = None
+        conversation_id: Optional[int] = None,
+        user_id: Optional[int] = None
     ) -> AuditTask:
         """创建审查任务"""
         audit_type_enum = AuditType(audit_type) if audit_type in [e.value for e in AuditType] else AuditType.DRAFT
@@ -91,13 +102,14 @@ class AuditService:
             audit_type=audit_type_enum,
             progress=0,
             config_id=config_id,
-            conversation_id=conversation_id
+            conversation_id=conversation_id,
+            user_id=user_id
         )
         self.db.add(task)
         self.db.commit()
         self.db.refresh(task)
         
-        self._add_trail(task.id, "创建审查任务", "系统", f"上传文档：{document_name}")
+        self._add_trail(task.id, "创建审查任务", "系统", f"上传文档：{document_name}", user_id=user_id)
         
         return task
     
@@ -108,10 +120,14 @@ class AuditService:
     def get_tasks(
         self,
         limit: int = 10,
-        status: Optional[str] = None
+        status: Optional[str] = None,
+        user_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """获取任务列表"""
         query = self.db.query(AuditTask)
+        
+        if user_id:
+            query = query.filter(AuditTask.user_id == user_id)
         
         if status:
             status_enum = TaskStatus(status) if status in [e.value for e in TaskStatus] else None
@@ -183,22 +199,41 @@ class AuditService:
         self,
         task_id: int,
         document_name: str,
-        risk_level: Optional[str] = None
+        risk_level: Optional[str] = None,
+        reviewer_id: Optional[int] = None
     ) -> AuditResult:
         """创建审查结果"""
+        existing_result = self.get_result_by_task_id(task_id)
+        if existing_result:
+            return existing_result
+        
         risk_enum = RiskLevel(risk_level) if risk_level in [e.value for e in RiskLevel] else None
         
         result = AuditResult(
             task_id=task_id,
             document_name=document_name,
             risk_level=risk_enum,
-            status=ResultStatus.PENDING_REVIEW
+            status=ResultStatus.PENDING_REVIEW,
+            reviewer_id=reviewer_id
         )
         self.db.add(result)
         self.db.commit()
         self.db.refresh(result)
         
         return result
+    
+    def get_or_create_result(
+        self,
+        task_id: int,
+        document_name: str,
+        risk_level: Optional[str] = None
+    ) -> AuditResult:
+        """获取或创建审查结果"""
+        return self.create_result(
+            task_id=task_id,
+            document_name=document_name,
+            risk_level=risk_level
+        )
     
     def get_result_by_id(self, result_id: int) -> Optional[AuditResult]:
         """根据ID获取结果"""
@@ -318,6 +353,161 @@ class AuditService:
         
         return issue
     
+    def batch_update_issues(
+        self,
+        result_id: int,
+        issue_ids: List[int],
+        status: str,
+        user_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """批量更新问题状态"""
+        status_enum = IssueStatus(status) if status in [e.value for e in IssueStatus] else None
+        if not status_enum:
+            return {"success": False, "message": "无效的状态值"}
+        
+        query = self.db.query(AuditIssue).filter(
+            AuditIssue.result_id == result_id,
+            AuditIssue.id.in_(issue_ids)
+        )
+        
+        updated_count = query.update({"status": status_enum}, synchronize_session=False)
+        self.db.commit()
+        
+        result = self.get_result_by_id(result_id)
+        if result:
+            self._add_trail(
+                task_id=result.task_id,
+                action="批量更新问题状态",
+                actor="用户",
+                details=f"批量将 {updated_count} 个问题状态更新为 {status}",
+                user_id=user_id
+            )
+        
+        return {
+            "success": True,
+            "updated_count": updated_count,
+            "message": f"成功更新 {updated_count} 个问题状态"
+        }
+    
+    def get_issue_by_id(self, issue_id: int) -> Optional[AuditIssue]:
+        """根据ID获取问题"""
+        return self.db.query(AuditIssue).filter(AuditIssue.id == issue_id).first()
+    
+    # ==================== 审核确认相关 ====================
+    
+    def start_review(
+        self,
+        result_id: int,
+        reviewer_id: int
+    ) -> Optional[AuditResult]:
+        """开始审核 - 将结果状态改为审核中"""
+        result = self.get_result_by_id(result_id)
+        if not result:
+            return None
+        
+        if result.status != ResultStatus.PENDING_REVIEW:
+            return None
+        
+        result.status = ResultStatus.REVIEWING
+        result.reviewer_id = reviewer_id
+        self.db.commit()
+        self.db.refresh(result)
+        
+        self._add_trail(
+            task_id=result.task_id,
+            action="开始审核",
+            actor="审核人",
+            details="审核人开始审核审查结果",
+            user_id=reviewer_id
+        )
+        
+        return result
+    
+    def confirm_result(
+        self,
+        result_id: int,
+        reviewer_id: int,
+        comment: Optional[str] = None
+    ) -> Optional[AuditResult]:
+        """确认审查结果 - 将状态改为已完成"""
+        result = self.get_result_by_id(result_id)
+        if not result:
+            return None
+        
+        if result.status == ResultStatus.COMPLETED:
+            return result
+        
+        result.status = ResultStatus.COMPLETED
+        result.reviewer_id = reviewer_id
+        self.db.commit()
+        self.db.refresh(result)
+        
+        self.update_result_statistics(result_id)
+        
+        detail_msg = "审查结果已确认"
+        if comment:
+            detail_msg += f"，审核意见：{comment}"
+        
+        self._add_trail(
+            task_id=result.task_id,
+            action="确认审查结果",
+            actor="审核人",
+            details=detail_msg,
+            user_id=reviewer_id
+        )
+        
+        return result
+    
+    def reject_result(
+        self,
+        result_id: int,
+        reviewer_id: int,
+        reason: str
+    ) -> Optional[AuditResult]:
+        """驳回审查结果 - 需要重新审查"""
+        result = self.get_result_by_id(result_id)
+        if not result:
+            return None
+        
+        result.status = ResultStatus.PENDING_REVIEW
+        result.reviewer_id = reviewer_id
+        self.db.commit()
+        self.db.refresh(result)
+        
+        self._add_trail(
+            task_id=result.task_id,
+            action="驳回审查结果",
+            actor="审核人",
+            details=f"驳回原因：{reason}",
+            user_id=reviewer_id
+        )
+        
+        return result
+    
+    def get_review_statistics(self, result_id: int) -> Dict[str, Any]:
+        """获取审核统计信息"""
+        result = self.get_result_by_id(result_id)
+        if not result:
+            return {}
+        
+        issues = self.db.query(AuditIssue).filter(AuditIssue.result_id == result_id).all()
+        
+        total = len(issues)
+        pending = len([i for i in issues if i.status == IssueStatus.PENDING])
+        accepted = len([i for i in issues if i.status == IssueStatus.ACCEPTED])
+        rejected = len([i for i in issues if i.status == IssueStatus.REJECTED])
+        partial = len([i for i in issues if i.status == IssueStatus.PARTIAL_ACCEPTED])
+        
+        return {
+            "total_issues": total,
+            "pending_issues": pending,
+            "accepted_issues": accepted,
+            "rejected_issues": rejected,
+            "partial_accepted_issues": partial,
+            "review_progress": round((accepted + rejected + partial) / total * 100) if total > 0 else 0,
+            "all_reviewed": pending == 0
+        }
+    
     # ==================== 配置相关 ====================
     
     def create_config(
@@ -404,14 +594,16 @@ class AuditService:
         task_id: int,
         action: str,
         actor: str = "系统",
-        details: Optional[str] = None
+        details: Optional[str] = None,
+        user_id: Optional[int] = None
     ) -> AuditTrail:
         """添加审查轨迹"""
         trail = AuditTrail(
             task_id=task_id,
             action=action,
             actor=actor,
-            details=details
+            details=details,
+            user_id=user_id
         )
         self.db.add(trail)
         self.db.commit()
@@ -436,10 +628,14 @@ class AuditService:
         audit_type: Optional[str] = None,
         risk_level: Optional[str] = None,
         keyword: Optional[str] = None,
-        limit: int = 20
+        limit: int = 20,
+        user_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """获取审查历史记录"""
         query = self.db.query(AuditResult).join(AuditTask)
+        
+        if user_id:
+            query = query.filter(AuditTask.user_id == user_id)
         
         if audit_type:
             audit_type_enum = AuditType(audit_type) if audit_type in [e.value for e in AuditType] else None

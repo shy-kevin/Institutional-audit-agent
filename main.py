@@ -3,9 +3,11 @@
 """
 
 import os
+import traceback
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from config import settings
 from db.mysql_session import init_db
 from routers import api_router
@@ -46,6 +48,28 @@ app = FastAPI(
     description="基于LangChain和LangGraph的制度审查智能体系统，支持PDF文件解析、知识库管理和智能问答",
     lifespan=lifespan
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """
+    全局异常处理器
+    
+    捕获所有未处理的异常，记录错误日志并返回友好的错误信息
+    """
+    error_msg = f"全局异常 - URL: {request.url}, 方法: {request.method}, 错误: {str(exc)}"
+    logger.error(error_msg, exc_info=True)
+    logger.error(f"异常堆栈:\n{traceback.format_exc()}")
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "服务器内部错误",
+            "error": str(exc),
+            "path": str(request.url)
+        }
+    )
+
 
 app.add_middleware(
     CORSMiddleware,

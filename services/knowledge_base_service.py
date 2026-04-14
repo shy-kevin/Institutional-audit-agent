@@ -140,7 +140,7 @@ class KnowledgeBaseService:
     
     def get_knowledge_base_by_id(self, knowledge_base_id: int) -> Optional[KnowledgeBase]:
         """
-        根据ID获取知识库
+        根据ID获取知识库（本地数据库）
         
         Args:
             knowledge_base_id: 知识库ID
@@ -160,6 +160,46 @@ class KnowledgeBaseService:
             logger.debug(f"知识库不存在 - ID: {knowledge_base_id}")
         
         return result
+    
+    async def get_knowledge_base_by_external_id(self, external_id: str) -> Optional[Dict[str, Any]]:
+        """
+        根据外部ID获取知识库详情
+        
+        Args:
+            external_id: 外部文档ID（UUID格式）
+        
+        Returns:
+            Optional[Dict]: 知识库详情
+        """
+        logger.debug(f"查询知识库详情 - external_id: {external_id}")
+        
+        try:
+            result = await knowledge_api_client.get_document(external_id)
+            
+            if isinstance(result, dict):
+                if not result.get("success", True):
+                    logger.error(f"获取文档详情失败: {result.get('error')}")
+                    return None
+                
+                doc = result.get("document", result.get("result", result))
+            else:
+                doc = result
+            
+            return {
+                "id": doc.get("id"),
+                "external_id": doc.get("id"),
+                "name": doc.get("title") or doc.get("filename", "未命名"),
+                "description": doc.get("department") or doc.get("summary", ""),
+                "file_name": doc.get("filename", ""),
+                "file_size": doc.get("file_size"),
+                "status": "completed" if doc.get("status") == "active" else doc.get("status", ""),
+                "created_at": doc.get("created_at") or doc.get("upload_time", ""),
+                "updated_at": doc.get("updated_at") or doc.get("created_at", ""),
+                "external_file_id": doc.get("file_id") or doc.get("id")
+            }
+        except Exception as e:
+            logger.error(f"获取知识库详情异常: {str(e)}", exc_info=True)
+            return None
     
     async def get_all_knowledge_bases(
         self,
@@ -222,44 +262,6 @@ class KnowledgeBaseService:
             logger.error(f"获取知识库列表异常: {str(e)}", exc_info=True)
             return [], 0
     
-    async def get_knowledge_base_by_external_id(self, external_id: str) -> Optional[Dict[str, Any]]:
-        """
-        根据外部ID获取知识库详情
-        
-        Args:
-            external_id: 外部文档ID
-        
-        Returns:
-            Optional[Dict]: 知识库详情
-        """
-        logger.debug(f"查询知识库详情 - external_id: {external_id}")
-        
-        try:
-            result = await knowledge_api_client.get_document(external_id)
-            
-            if isinstance(result, dict):
-                if not result.get("success", True):
-                    logger.error(f"获取文档详情失败: {result.get('error')}")
-                    return None
-                
-                doc = result.get("document", result.get("result", result))
-            else:
-                doc = result
-            
-            return {
-                "external_id": doc.get("id"),
-                "name": doc.get("title") or doc.get("filename", "未命名"),
-                "description": doc.get("department") or doc.get("summary", ""),
-                "file_name": doc.get("filename", ""),
-                "file_size": doc.get("file_size"),
-                "status": "completed" if doc.get("status") == "active" else doc.get("status", ""),
-                "created_at": doc.get("created_at") or doc.get("upload_time", ""),
-                "updated_at": doc.get("updated_at") or doc.get("created_at", "")
-            }
-        except Exception as e:
-            logger.error(f"获取知识库详情异常: {str(e)}", exc_info=True)
-            return None
-    
     async def get_document_detail(self, doc_id: str) -> Optional[Dict[str, Any]]:
         """
         获取文档完整详情
@@ -291,81 +293,79 @@ class KnowledgeBaseService:
             logger.error(f"获取文档详情异常: {str(e)}", exc_info=True)
             return None
     
-    def update_knowledge_base(
+    async def update_knowledge_base(
         self,
-        knowledge_base_id: int,
+        knowledge_base_id: str,
         name: Optional[str] = None,
         description: Optional[str] = None
-    ) -> Optional[KnowledgeBase]:
+    ) -> Optional[Dict[str, Any]]:
         """
         更新知识库信息
         
+        调用外部API更新文档信息
+        
         Args:
-            knowledge_base_id: 知识库ID
+            knowledge_base_id: 知识库ID（UUID格式）
             name: 新名称
             description: 新描述
         
         Returns:
-            Optional[KnowledgeBase]: 更新后的知识库对象
+            Optional[Dict]: 更新后的知识库信息
         """
         logger.info(f"更新知识库 - ID: {knowledge_base_id}")
         
-        knowledge_base = self.get_knowledge_base_by_id(knowledge_base_id)
-        if not knowledge_base:
-            logger.error(f"知识库不存在 - ID: {knowledge_base_id}")
+        try:
+            update_data = {}
+            if name is not None:
+                update_data["title"] = name
+            if description is not None:
+                update_data["department"] = description
+            
+            result = await knowledge_api_client.update_document(
+                doc_id=knowledge_base_id,
+                update_data=update_data
+            )
+            
+            if not result.get("success"):
+                logger.error(f"更新知识库失败: {result.get('error')}")
+                return None
+            
+            return await self.get_knowledge_base_by_external_id(knowledge_base_id)
+            
+        except Exception as e:
+            logger.error(f"更新知识库异常 - ID: {knowledge_base_id}, 错误: {str(e)}", exc_info=True)
             return None
-        
-        if name is not None:
-            knowledge_base.name = name
-        if description is not None:
-            knowledge_base.description = description
-        
-        self.db.commit()
-        self.db.refresh(knowledge_base)
-        
-        logger.info(f"知识库更新成功 - ID: {knowledge_base_id}")
-        return knowledge_base
     
-    async def delete_knowledge_base(self, knowledge_base_id: int) -> bool:
+    async def delete_knowledge_base(self, knowledge_base_id: str) -> bool:
         """
         删除知识库
         
-        调用外部API删除文档，然后删除本地记录
+        调用外部API删除文档
         
         Args:
-            knowledge_base_id: 知识库ID
+            knowledge_base_id: 知识库ID（UUID格式）
         
         Returns:
             bool: 删除是否成功
         """
         logger.info(f"删除知识库 - ID: {knowledge_base_id}")
         
-        knowledge_base = self.get_knowledge_base_by_id(knowledge_base_id)
-        if not knowledge_base:
-            logger.error(f"知识库不存在 - ID: {knowledge_base_id}")
-            return False
-        
         try:
-            if knowledge_base.external_file_id:
-                delete_result = await knowledge_api_client.delete_document(
-                    knowledge_base.external_file_id
-                )
-                if not delete_result.get("success"):
-                    logger.warning(f"外部API删除文档失败: {delete_result.get('error')}")
+            delete_result = await knowledge_api_client.delete_document(knowledge_base_id)
             
-            self.db.delete(knowledge_base)
-            self.db.commit()
+            if not delete_result.get("success"):
+                logger.warning(f"外部API删除文档失败: {delete_result.get('error')}")
+                return False
             
             logger.info(f"知识库删除成功 - ID: {knowledge_base_id}")
             return True
         except Exception as e:
             logger.error(f"知识库删除失败 - ID: {knowledge_base_id}, 错误: {str(e)}", exc_info=True)
-            self.db.rollback()
             return False
     
     async def search_similar_documents(
         self,
-        knowledge_base_id: int,
+        knowledge_base_id: str,
         query: str,
         k: int = 4
     ) -> List[dict]:
@@ -375,7 +375,7 @@ class KnowledgeBaseService:
         调用外部API的智能检索接口
         
         Args:
-            knowledge_base_id: 知识库ID
+            knowledge_base_id: 知识库ID（UUID格式）
             query: 查询文本
             k: 返回的文档数量
         
@@ -383,11 +383,6 @@ class KnowledgeBaseService:
             List[dict]: 相似文档列表
         """
         logger.debug(f"搜索相似文档 - 知识库ID: {knowledge_base_id}, 查询: {query[:50]}...")
-        
-        knowledge_base = self.get_knowledge_base_by_id(knowledge_base_id)
-        if not knowledge_base or not knowledge_base.external_file_id:
-            logger.error(f"知识库不存在或未上传到外部系统 - ID: {knowledge_base_id}")
-            return []
         
         try:
             search_result = await knowledge_api_client.search(

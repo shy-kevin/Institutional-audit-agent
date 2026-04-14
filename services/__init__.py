@@ -5,5 +5,6 @@
 from .knowledge_base_service import KnowledgeBaseService
 from .conversation_service import ConversationService
 from .message_service import MessageService
+from .template_service import TemplateService
 
-__all__ = ["KnowledgeBaseService", "ConversationService", "MessageService"]
+__all__ = ["KnowledgeBaseService", "ConversationService", "MessageService", "TemplateService"]

@@ -165,9 +165,9 @@ async def get_document_detail(
     return doc_detail
 
 
-@router.get("/{knowledge_base_id}", response_model=KnowledgeBaseResponse, summary="获取知识库详情")
-def get_knowledge_base(
-    knowledge_base_id: int,
+@router.get("/{knowledge_base_id}", summary="获取知识库详情")
+async def get_knowledge_base(
+    knowledge_base_id: str,
     db: Session = Depends(get_db)
 ):
     """
@@ -176,27 +176,27 @@ def get_knowledge_base(
     根据ID获取指定知识库的详细信息
     
     Args:
-        knowledge_base_id: 知识库ID
+        knowledge_base_id: 知识库ID（UUID格式）
         db: 数据库会话
     
     Returns:
-        KnowledgeBaseResponse: 知识库详情
+        dict: 知识库详情
     
     Raises:
         HTTPException: 知识库不存在时抛出404错误
     """
     service = KnowledgeBaseService(db)
-    knowledge_base = service.get_knowledge_base_by_id(knowledge_base_id)
+    knowledge_base = await service.get_knowledge_base_by_external_id(knowledge_base_id)
     
     if not knowledge_base:
         raise HTTPException(status_code=404, detail="知识库不存在")
     
-    return KnowledgeBaseResponse.model_validate(knowledge_base)
+    return knowledge_base
 
 
-@router.put("/{knowledge_base_id}", response_model=KnowledgeBaseResponse, summary="更新知识库信息")
-def update_knowledge_base(
-    knowledge_base_id: int,
+@router.put("/{knowledge_base_id}", summary="更新知识库信息")
+async def update_knowledge_base(
+    knowledge_base_id: str,
     request: KnowledgeBaseCreateRequest,
     db: Session = Depends(get_db)
 ):
@@ -206,18 +206,18 @@ def update_knowledge_base(
     更新指定知识库的名称和描述
     
     Args:
-        knowledge_base_id: 知识库ID
+        knowledge_base_id: 知识库ID（UUID格式）
         request: 更新请求
         db: 数据库会话
     
     Returns:
-        KnowledgeBaseResponse: 更新后的知识库信息
+        dict: 更新后的知识库信息
     
     Raises:
         HTTPException: 知识库不存在时抛出404错误
     """
     service = KnowledgeBaseService(db)
-    knowledge_base = service.update_knowledge_base(
+    knowledge_base = await service.update_knowledge_base(
         knowledge_base_id=knowledge_base_id,
         name=request.name,
         description=request.description
@@ -226,12 +226,12 @@ def update_knowledge_base(
     if not knowledge_base:
         raise HTTPException(status_code=404, detail="知识库不存在")
     
-    return KnowledgeBaseResponse.model_validate(knowledge_base)
+    return knowledge_base
 
 
 @router.delete("/{knowledge_base_id}", response_model=ApiResponse, summary="删除知识库")
 async def delete_knowledge_base(
-    knowledge_base_id: int,
+    knowledge_base_id: str,
     db: Session = Depends(get_db)
 ):
     """
@@ -240,7 +240,7 @@ async def delete_knowledge_base(
     删除指定知识库，包括外部知识库平台的数据
     
     Args:
-        knowledge_base_id: 知识库ID
+        knowledge_base_id: 知识库ID（UUID格式）
         db: 数据库会话
     
     Returns:
@@ -251,7 +251,8 @@ async def delete_knowledge_base(
     """
     service = KnowledgeBaseService(db)
     
-    if not service.get_knowledge_base_by_id(knowledge_base_id):
+    knowledge_base = await service.get_knowledge_base_by_external_id(knowledge_base_id)
+    if not knowledge_base:
         raise HTTPException(status_code=404, detail="知识库不存在")
     
     if not await service.delete_knowledge_base(knowledge_base_id):
@@ -294,7 +295,7 @@ async def upload_file_only(
 
 @router.get("/{knowledge_base_id}/status", summary="获取任务状态")
 async def get_task_status(
-    knowledge_base_id: int,
+    knowledge_base_id: str,
     db: Session = Depends(get_db)
 ):
     """
@@ -303,31 +304,32 @@ async def get_task_status(
     查询外部知识库平台的文档解析任务状态
     
     Args:
-        knowledge_base_id: 知识库ID
+        knowledge_base_id: 知识库ID（UUID格式）
         db: 数据库会话
     
     Returns:
         dict: 任务状态信息
     """
     service = KnowledgeBaseService(db)
-    knowledge_base = service.get_knowledge_base_by_id(knowledge_base_id)
+    knowledge_base = await service.get_knowledge_base_by_external_id(knowledge_base_id)
     
     if not knowledge_base:
         raise HTTPException(status_code=404, detail="知识库不存在")
     
-    if not knowledge_base.external_file_id:
+    external_file_id = knowledge_base.get("external_file_id")
+    if not external_file_id:
         return {
-            "status": knowledge_base.status,
+            "status": knowledge_base.get("status", "unknown"),
             "message": "文件尚未上传到外部知识库平台"
         }
     
-    task_status = await service.get_task_status(knowledge_base.external_file_id)
+    task_status = await service.get_task_status(external_file_id)
     return task_status
 
 
 @router.post("/{knowledge_base_id}/search", summary="搜索知识库内容")
 async def search_knowledge_base(
-    knowledge_base_id: int,
+    knowledge_base_id: str,
     query: str = Form(..., description="搜索查询"),
     top_k: int = Form(5, description="返回结果数量"),
     db: Session = Depends(get_db)
@@ -338,7 +340,7 @@ async def search_knowledge_base(
     调用外部知识库平台的智能检索接口
     
     Args:
-        knowledge_base_id: 知识库ID
+        knowledge_base_id: 知识库ID（UUID格式）
         query: 搜索查询语句
         top_k: 返回结果数量
         db: 数据库会话
@@ -348,7 +350,8 @@ async def search_knowledge_base(
     """
     service = KnowledgeBaseService(db)
     
-    if not service.get_knowledge_base_by_id(knowledge_base_id):
+    knowledge_base = await service.get_knowledge_base_by_external_id(knowledge_base_id)
+    if not knowledge_base:
         raise HTTPException(status_code=404, detail="知识库不存在")
     
     results = await service.search_similar_documents(
